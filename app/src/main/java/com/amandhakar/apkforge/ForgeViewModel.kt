@@ -8,6 +8,10 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.amandhakar.apkforge.core.InspectionResult
+import com.amandhakar.apkforge.core.InstalledApp
+import com.amandhakar.apkforge.inspect.InstalledAppsReader
+import com.amandhakar.apkforge.workspace.InstalledApkImporter
+import com.amandhakar.apkforge.workspace.InstalledImport
 import com.amandhakar.apkforge.inspect.ApkMetadata
 import com.amandhakar.apkforge.inspect.ApkMetadataReader
 import com.amandhakar.apkforge.inspect.ZipApkInspector
@@ -35,7 +39,13 @@ data class UiState(
     val message: String? = null,
     val debugLogEnabled: Boolean = false,
     val logText: String = "",
+    /** Apps Android lets us see; null until loaded. */
+    val installed: List<InstalledApp>? = null,
+    /** Set when an installed app's APK could not be copied: shows the explanation and the file-picker fallback. */
+    val accessProblem: AccessProblem? = null,
 )
+
+data class AccessProblem(val appLabel: String, val explanation: String)
 
 class ForgeViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = app.getSharedPreferences("settings", Context.MODE_PRIVATE)
@@ -43,6 +53,8 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
     private val log = DebugLog(File(app.filesDir, "debug.log"), isEnabled = { prefs.getBoolean(KEY_DEBUG, false) })
     private val inspector = ZipApkInspector()
     private val metadataReader = ApkMetadataReader(app)
+    private val installedReader = InstalledAppsReader(app)
+    private val installedImporter = InstalledApkImporter(workspace, MAX_IMPORT_BYTES)
 
     private val _state = MutableStateFlow(UiState(debugLogEnabled = prefs.getBoolean(KEY_DEBUG, false)))
     val state: StateFlow<UiState> = _state
@@ -104,6 +116,42 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
     }
+
+    fun loadInstalled() {
+        _state.value = _state.value.copy(busy = "Reading installed apps…")
+        viewModelScope.launch {
+            val apps = withContext(Dispatchers.IO) {
+                try { installedReader.read() } catch (e: Exception) { log.event("installed_list_failed", "reason" to e.javaClass.simpleName); emptyList() }
+            }
+            log.event("installed_list", "count" to apps.size, "sdk" to Build.VERSION.SDK_INT)
+            _state.value = _state.value.copy(busy = null, installed = apps)
+        }
+    }
+
+    /** Tries to copy the app's APK. Android decides whether that is allowed; a refusal is explained, not worked around. */
+    fun importInstalled(app: InstalledApp) {
+        _state.value = _state.value.copy(busy = "Copying ${app.label}…", message = null, accessProblem = null)
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) { installedImporter.import(app.label, app.sourceDir) }
+            // The log records the outcome only, never which app it was.
+            log.event("installed_copy", "result" to result.javaClass.simpleName, "why" to ((result as? InstalledImport.NotReadable)?.why ?: "-"), "sdk" to Build.VERSION.SDK_INT)
+            when (result) {
+                is InstalledImport.Imported -> { refreshProjects(); open(result.project.id) }
+                is InstalledImport.TooLarge -> _state.value = _state.value.copy(busy = null, message = "That APK is larger than ${MAX_IMPORT_BYTES / (1024 * 1024)} MB, which is the limit.")
+                is InstalledImport.NoPath -> _state.value = _state.value.copy(busy = null, accessProblem = AccessProblem(app.label, "Android did not give a usable file location for this app."))
+                is InstalledImport.NotReadable -> _state.value = _state.value.copy(
+                    busy = null,
+                    accessProblem = AccessProblem(
+                        app.label,
+                        if (result.why == "missing") "The APK file is no longer where Android said it was."
+                        else "Android does not let Apkforge read this app's APK on this phone. This is a platform rule, and Apkforge does not try to get around it.",
+                    ),
+                )
+            }
+        }
+    }
+
+    fun dismissAccessProblem() { _state.value = _state.value.copy(accessProblem = null) }
 
     fun close() { _state.value = _state.value.copy(details = null) }
 

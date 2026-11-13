@@ -33,6 +33,7 @@ class MainActivity : ComponentActivity() {
     private fun App() {
         val state by vm.state.collectAsState()
         var showSettings by remember { mutableStateOf(false) }
+        var showInstalled by remember { mutableStateOf(false) }
 
         val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) vm.importApk(uri)
@@ -42,8 +43,8 @@ class MainActivity : ComponentActivity() {
             if (uri != null && id != null) vm.exportOriginal(id, uri)
         }
 
-        BackHandler(enabled = showSettings || state.details != null) {
-            if (showSettings) showSettings = false else vm.close()
+        BackHandler(enabled = showSettings || showInstalled || state.details != null) {
+            if (showSettings) showSettings = false else if (state.details != null) vm.close() else showInstalled = false
         }
 
         Scaffold(
@@ -69,11 +70,20 @@ class MainActivity : ComponentActivity() {
                         onExport = { saveAs.launch(exportName(state.details!!)) },
                         onDelete = { vm.delete(state.details!!.project.id) },
                     )
+                    showInstalled -> InstalledAppsScreen(
+                        apps = state.installed,
+                        problem = state.accessProblem,
+                        onPick = { vm.importInstalled(it) },
+                        onPickFile = { vm.dismissAccessProblem(); pick.launch(arrayOf("application/vnd.android.package-archive", "application/octet-stream", "*/*")) },
+                        onDismissProblem = vm::dismissAccessProblem,
+                        onBack = { showInstalled = false },
+                    )
                     else -> HomeScreen(
                         projects = state.projects,
                         onImport = { pick.launch(arrayOf("application/vnd.android.package-archive", "application/octet-stream", "*/*")) },
                         onOpen = vm::open,
                         onDelete = vm::delete,
+                        onInstalled = { vm.loadInstalled(); showInstalled = true },
                         onSettings = { vm.refreshLog(); showSettings = true },
                     )
                 }
