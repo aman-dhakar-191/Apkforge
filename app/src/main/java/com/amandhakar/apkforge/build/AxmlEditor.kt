@@ -6,7 +6,8 @@ import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-class AxmlAttr(val namespace: String?, val name: String, val value: String?, internal val offset: Int)
+/** [value] is the text of a string attribute; [reference] the resource id of a `@resource` attribute (null otherwise). */
+class AxmlAttr(val namespace: String?, val name: String, val value: String?, internal val offset: Int, val reference: Int? = null)
 class AxmlElement(val index: Int, val name: String, val depth: Int, val parent: Int, val attrs: List<AxmlAttr>)
 
 /** A parsed compiled-XML file. Keep it to pass back to [AxmlEditor.apply]. */
@@ -75,6 +76,7 @@ class AxmlEditor(private val maxElements: Int = 100_000) {
                             name = s.getOrNull(b.getInt(a + 4)) ?: "",
                             value = if (dataType == 0x03) s.getOrNull(data) else null,
                             offset = a,
+                            reference = if (dataType == 0x01 && data != 0) data else null,
                         )
                     }
                     val index = elements.size

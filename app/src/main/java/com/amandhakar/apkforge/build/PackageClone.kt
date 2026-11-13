@@ -135,14 +135,14 @@ object PackageClone {
     }
 
     /** Reads the manifest and resource table from [apk] and works out the changes. */
-    fun prepare(apk: File, spec: CloneSpec): CloneResult = try {
+    fun prepare(apk: File, spec: CloneSpec, arscOverride: ByteArray? = null): CloneResult = try {
         ZipFile(apk).use { z ->
             val m = z.getEntry("AndroidManifest.xml") ?: return CloneResult.Unsupported("The APK has no manifest.")
             if (m.size > 8 * 1024 * 1024) return CloneResult.Unsupported("The manifest is too large.")
             val manifest = z.getInputStream(m).use { it.readBytes() }
             val arscEntry = z.getEntry("resources.arsc")
             if (arscEntry != null && arscEntry.size > 96 * 1024 * 1024) return CloneResult.Unsupported("The resource table is too large.")
-            apply(manifest, arscEntry?.let { e -> z.getInputStream(e).use { it.readBytes() } }, spec)
+            apply(manifest, arscOverride ?: arscEntry?.let { e -> z.getInputStream(e).use { it.readBytes() } }, spec)
         }
     } catch (e: java.io.IOException) {
         CloneResult.Unsupported("The APK could not be read: ${e.message}")

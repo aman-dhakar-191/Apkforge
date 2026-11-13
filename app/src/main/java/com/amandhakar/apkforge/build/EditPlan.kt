@@ -8,6 +8,11 @@ sealed interface ApkEdit {
     val entryName: String
 
     class ReplaceFile(override val entryName: String, val bytes: ByteArray) : ApkEdit
+
+    /** Put a PNG where a ".xml" drawing (vector, shape...) was. The file is renamed ".png" and the resource table follows. */
+    class ReplaceDrawingWithPicture(override val entryName: String, val bytes: ByteArray) : ApkEdit {
+        val newName: String get() = entryName.removeSuffix("xml") + "png"
+    }
 }
 
 enum class ImageKind { PNG, JPEG, WEBP, GIF, UNKNOWN;
@@ -34,6 +39,16 @@ object EditPlan {
     /** Null when the edit is allowed; otherwise a plain-language reason it is not. */
     fun problem(edit: ApkEdit, entries: List<ApkEntry>): String? {
         when (edit) {
+            is ApkEdit.ReplaceDrawingWithPicture -> {
+                val name = edit.entryName
+                if (!PathSafety.isSafeEntryName(name)) return "That file name is not safe."
+                if (!name.startsWith("res/") || !name.endsWith(".xml")) return "Only a drawing (an .xml file under res/) can be turned into a picture."
+                if (entries.count { it.name == name } != 1) return "That file is missing from the APK, or its name is not unique."
+                if (entries.any { it.name == edit.newName }) return "A file named ${edit.newName} already exists."
+                if (edit.bytes.isEmpty() || edit.bytes.size > MAX_REPLACEMENT_BYTES) return "The new picture is empty or larger than ${MAX_REPLACEMENT_BYTES / (1024 * 1024)} MB."
+                if (ImageKind.sniff(edit.bytes) != ImageKind.PNG) return "The new picture must be a PNG."
+                return null
+            }
             is ApkEdit.ReplaceFile -> {
                 val name = edit.entryName
                 if (!PathSafety.isSafeEntryName(name)) return "That file name is not safe."
@@ -68,6 +83,7 @@ object EditPlan {
     /** One line per change, shown before anything is built. */
     fun summary(edits: List<ApkEdit>, entries: List<ApkEntry>): List<String> = edits.map { e ->
         when (e) {
+            is ApkEdit.ReplaceDrawingWithPicture -> "Replace the drawing ${e.entryName} with a picture (${e.newName}, ${bytes(e.bytes.size.toLong())})"
             is ApkEdit.ReplaceFile -> {
                 val old = entries.firstOrNull { it.name == e.entryName }
                 "Replace ${e.entryName} (${old?.size?.let(::bytes) ?: "?"} → ${bytes(e.bytes.size.toLong())})"
