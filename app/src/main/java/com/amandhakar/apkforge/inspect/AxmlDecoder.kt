@@ -20,7 +20,13 @@ class AxmlDecoder(
     private val maxBytes: Int = 8 * 1024 * 1024,
     private val maxElements: Int = 100_000,
     private val maxDepth: Int = 256,
+    /** Turns a resource id into "type/name" (from resources.arsc) so references can be shown by name. */
+    private val resolver: ((Int) -> String?)? = null,
 ) : ManifestDecoder {
+
+    /** Result of decoding: the readable XML and the root element's attributes (local names). */
+    class Decoded(val xml: String, val rootAttributes: Map<String, String>)
+
 
     override fun decode(apk: File): ManifestResult = try {
         val bytes = ZipFile(apk).use { zip ->
@@ -29,14 +35,16 @@ class AxmlDecoder(
             zip.getInputStream(e).use { it.readNBytes(maxBytes + 1) }
         }
         if (bytes.size > maxBytes) ManifestResult.Failed("The manifest is larger than $maxBytes bytes")
-        else ManifestResult.Ok(decode(bytes))
+        else decodeFull(bytes).let { ManifestResult.Ok(it.xml, it.rootAttributes) }
     } catch (e: AxmlException) {
         ManifestResult.Failed("The manifest could not be decoded: ${e.message}")
     } catch (e: IOException) {
         ManifestResult.Failed("The manifest could not be read: ${e.message}")
     }
 
-    fun decode(bytes: ByteArray): String {
+    fun decode(bytes: ByteArray): String = decodeFull(bytes).xml
+
+    fun decodeFull(bytes: ByteArray): Decoded {
         val b = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
         if (bytes.size < 8) throw AxmlException("file too short")
         if (b.getShort(0).toInt() and 0xFFFF != RES_XML) throw AxmlException("not compiled Android XML")
@@ -48,6 +56,7 @@ class AxmlDecoder(
         val out = StringBuilder("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n")
         var depth = 0
         var elements = 0
+        val root = LinkedHashMap<String, String>()
 
         var pos = 8
         while (pos + 8 <= total) {
@@ -57,7 +66,7 @@ class AxmlDecoder(
             if (headerSize < 8 || size < headerSize || pos + size > total) throw AxmlException("bad chunk size at $pos")
             val end = pos + size
             when (type) {
-                STRING_POOL -> strings = readStringPool(b, pos, end)
+                STRING_POOL -> strings = StringPool.read(b, pos, end)
                 RESOURCE_MAP -> {
                     val n = (size - headerSize) / 4
                     attrResIds = IntArray(n) { b.getInt(pos + headerSize + it * 4) }
@@ -96,8 +105,10 @@ class AxmlDecoder(
                         val raw = b.getInt(a + 8)
                         val dataType = b.get(a + 15).toInt() and 0xFF
                         val data = b.getInt(a + 16)
+                        val text = value(raw, dataType, data, strings)
+                        if (depth == 1) root[aname] = text
                         out.append("\n").append("  ".repeat(depth)).append(qualified(ans, aname, strings, prefixes))
-                            .append("=\"").append(esc(value(raw, dataType, data, strings))).append('"')
+                            .append("=\"").append(esc(text)).append('"')
                     }
                     out.append(">\n")
                 }
@@ -118,7 +129,7 @@ class AxmlDecoder(
             pos = end
         }
         if (depth != 0) throw AxmlException("unclosed element")
-        return out.toString()
+        return Decoded(out.toString(), root)
     }
 
     private fun qualified(ns: Int, name: String, strings: List<String>, prefixes: Map<String, String>): String {
@@ -129,7 +140,7 @@ class AxmlDecoder(
 
     private fun value(raw: Int, type: Int, data: Int, strings: List<String>): String = when (type) {
         T_STRING -> str(strings, data)
-        T_REFERENCE -> if (data == 0) "@null" else "@0x%08x".format(data)
+        T_REFERENCE -> if (data == 0) "@null" else resolver?.invoke(data)?.let { "@$it" } ?: "@0x%08x".format(data)
         T_ATTRIBUTE -> "?0x%08x".format(data)
         T_FLOAT -> java.lang.Float.intBitsToFloat(data).toString()
         T_INT_DEC -> data.toString()
@@ -138,49 +149,6 @@ class AxmlDecoder(
         in T_COLOR_FIRST..T_COLOR_LAST -> "#%08x".format(data)
         T_DIMENSION, T_FRACTION -> "0x%08x (${if (type == T_DIMENSION) "dimension" else "fraction"})".format(data)
         else -> if (raw >= 0 && raw < strings.size) strings[raw] else "0x%x (type 0x%x)".format(data, type)
-    }
-
-    private fun readStringPool(b: ByteBuffer, pos: Int, end: Int): List<String> {
-        need(pos + 28 <= end, "short string pool")
-        val count = u32(b, pos + 8)
-        val flags = b.getInt(pos + 16)
-        val stringsStart = u32(b, pos + 20)
-        val utf8 = flags and 0x100 != 0
-        need(count.toLong() * 4 + 28 <= end - pos, "string pool too large for its chunk")
-        val result = ArrayList<String>(count)
-        for (i in 0 until count) {
-            val off = u32(b, pos + 28 + i * 4)
-            val s = pos + stringsStart + off
-            need(s >= pos && s < end, "string offset out of range")
-            result += if (utf8) readUtf8(b, s, end) else readUtf16(b, s, end)
-        }
-        return result
-    }
-
-    private fun readUtf8(b: ByteBuffer, start: Int, end: Int): String {
-        var p = start
-        fun len(): Int {
-            need(p < end, "string runs past the chunk")
-            var n = b.get(p++).toInt() and 0xFF
-            if (n and 0x80 != 0) { need(p < end, "string runs past the chunk"); n = ((n and 0x7F) shl 8) or (b.get(p++).toInt() and 0xFF) }
-            return n
-        }
-        len() // length in characters, not needed
-        val byteLen = len()
-        need(p + byteLen <= end, "string runs past the chunk")
-        val arr = ByteArray(byteLen); b.get(p, arr)
-        return String(arr, Charsets.UTF_8)
-    }
-
-    private fun readUtf16(b: ByteBuffer, start: Int, end: Int): String {
-        var p = start
-        need(p + 2 <= end, "string runs past the chunk")
-        var n = b.getShort(p).toInt() and 0xFFFF; p += 2
-        if (n and 0x8000 != 0) { need(p + 2 <= end, "string runs past the chunk"); n = ((n and 0x7FFF) shl 16) or (b.getShort(p).toInt() and 0xFFFF); p += 2 }
-        need(n >= 0 && p + n.toLong() * 2 <= end, "string runs past the chunk")
-        val sb = StringBuilder(n)
-        for (i in 0 until n) sb.append((b.getShort(p + i * 2).toInt() and 0xFFFF).toChar())
-        return sb.toString()
     }
 
     private fun str(strings: List<String>, i: Int): String = if (i in strings.indices) strings[i] else ""
