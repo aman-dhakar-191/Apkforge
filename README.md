@@ -6,7 +6,7 @@ Local only: no root, no network permission, nothing is uploaded.
 Only use it on apps you own or are authorized to analyze. It is not meant to bypass licensing,
 DRM, signature checks or anti-tamper protections.
 
-## Status: Phase 2 (installed apps)
+## Status: Phase 3 started (manifest viewer)
 
 Works now:
 
@@ -27,12 +27,17 @@ Works now:
   the file picker instead. It never uses root, hidden APIs or other apps' private data.
   Split APKs: only the base APK is copied for now, and the app says so.
 
-Not built yet (tabs show "not available yet"): manifest decoding, resources, smali/Java views,
-editing, rebuilding, signing, installing. See
+- **Manifest tab**: the binary AndroidManifest.xml shown as readable XML (own decoder, bounds-checked,
+  no dependencies). Resource references stay as numbers (`@0x7f090001`) until a resource-table
+  reader exists.
+
+Not built yet (tabs show "not available yet"): resource names, smali/Java views, editing,
+rebuilding, signing, installing. How rebuilding could work without `aapt2` is in
+[docs/toolchain.md](docs/toolchain.md). See
 [docs/plan.md](docs/plan.md).
 
-Status of checking: 30 unit tests pass (archive parsing, path safety, workspace, debug log,
-installed-app filtering and copying) and a release APK builds. **The screens, `PackageManager`
+Status of checking: 39 unit tests pass (archive parsing, path safety, workspace, debug log,
+installed-app filtering and copying, manifest decoding checked against `aapt2` output) and a release APK builds. **The screens, `PackageManager`
 reading and whether Android lets the app read other apps' APKs have not been run on a device yet.**
 
 ## Debug log (optional)

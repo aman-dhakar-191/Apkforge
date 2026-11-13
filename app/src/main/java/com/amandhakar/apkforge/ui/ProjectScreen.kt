@@ -3,12 +3,14 @@ package com.amandhakar.apkforge.ui
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.amandhakar.apkforge.ProjectDetails
 import com.amandhakar.apkforge.core.*
 
@@ -28,9 +30,32 @@ fun ProjectScreen(details: ProjectDetails, onBack: () -> Unit, onExport: () -> U
         when (tab) {
             0 -> Overview(details, onExport, onDelete)
             1 -> Files(details.inspection)
-            2 -> Later("Manifest decoding", "Reading the binary AndroidManifest.xml is planned for Phase 3. For now the Overview shows the package details Android reads from it.")
+            2 -> ManifestTab(details.manifest)
             3 -> Later("DEX and code view", "Smali and Java-like views are planned for Phase 3. The Files tab lists the DEX files in this APK.")
             else -> Later("Build, sign and install", "Rebuilding, signing and installing are later phases. This version only inspects and exports the untouched original.")
+        }
+    }
+}
+
+@Composable
+private fun ManifestTab(m: ManifestResult?) {
+    when (m) {
+        null -> Later("No manifest", "This file has no AndroidManifest.xml.")
+        is ManifestResult.Failed -> Later("Manifest not readable", m.reason)
+        is ManifestResult.Ok -> {
+            val lines = remember(m) { m.xml.lines() }
+            Column(Modifier.fillMaxSize()) {
+                Text(
+                    "Decoded from the binary manifest. Values like @0x7f090001 are references to resources.arsc entries; their names are not resolved yet.",
+                    Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxSize().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+                    items(lines.size) { i ->
+                        Text(lines[i], fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 12.sp, softWrap = false)
+                    }
+                }
+            }
         }
     }
 }

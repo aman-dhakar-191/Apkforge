@@ -8,6 +8,8 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.amandhakar.apkforge.core.InspectionResult
+import com.amandhakar.apkforge.core.ManifestResult
+import com.amandhakar.apkforge.inspect.AxmlDecoder
 import com.amandhakar.apkforge.core.InstalledApp
 import com.amandhakar.apkforge.inspect.InstalledAppsReader
 import com.amandhakar.apkforge.workspace.InstalledApkImporter
@@ -30,6 +32,7 @@ data class ProjectDetails(
     val project: Project,
     val inspection: InspectionResult,
     val metadata: ApkMetadata?,
+    val manifest: ManifestResult? = null,
 )
 
 data class UiState(
@@ -53,6 +56,7 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
     private val log = DebugLog(File(app.filesDir, "debug.log"), isEnabled = { prefs.getBoolean(KEY_DEBUG, false) })
     private val inspector = ZipApkInspector()
     private val metadataReader = ApkMetadataReader(app)
+    private val manifestDecoder = AxmlDecoder()
     private val installedReader = InstalledAppsReader(app)
     private val installedImporter = InstalledApkImporter(workspace, MAX_IMPORT_BYTES)
 
@@ -103,13 +107,15 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                 val apk = workspace.originalApk(id) ?: return@withContext null
                 val inspection = inspector.inspect(apk)
                 val meta = if (inspection is InspectionResult.Ok) metadataReader.read(apk) else null
+                val manifest = if (inspection is InspectionResult.Ok && inspection.summary.hasManifest) manifestDecoder.decode(apk) else null
                 log.event(
                     "inspect",
                     "result" to (if (inspection is InspectionResult.Ok) "ok" else (inspection as InspectionResult.Rejected).reason),
                     "entries" to ((inspection as? InspectionResult.Ok)?.summary?.entryCount ?: 0),
                     "metadata" to (meta != null),
+                    "manifest" to (if (manifest is ManifestResult.Ok) "ok" else if (manifest == null) "none" else "failed"),
                 )
-                ProjectDetails(project, inspection, meta)
+                ProjectDetails(project, inspection, meta, manifest)
             }
             _state.value = _state.value.copy(
                 busy = null,

@@ -7,8 +7,9 @@
 3. **Decode and inspect**: readable manifest, resources, smali. Java-like view only if a library
    proves reliable on-device.
 4. **Controlled edits**: a few explicit edits (text resources, an image) with a diff before rebuild.
-5. **Rebuild, sign, verify**: depends on the toolchain evaluation. Rebuilding resources normally
-   needs `aapt2`, which is the biggest risk on a phone. Decide this before starting phase 3.
+5. **Rebuild, sign, verify**: without `aapt2` (no Android build exists; see
+   [toolchain.md](toolchain.md)): smali for code, direct patching for a few resource edits, `apksig`
+   for signing.
 6. **Install** through Android's package installer only. Never silent, never an automatic uninstall.
 
 ## Open questions that need a device
