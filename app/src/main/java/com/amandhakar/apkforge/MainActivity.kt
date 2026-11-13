@@ -94,6 +94,9 @@ class MainActivity : ComponentActivity() {
                         onBuild = vm::buildCopy,
                         onExportForged = { saveForged.launch((state.details!!.metadata?.packageName ?: "app") + "-modified.apk") },
                         onInstall = { installModified() },
+                        openFile = vm::openFile,
+                        thumbOfResource = vm::thumbnailOfResource,
+                        thumbOfFile = vm::thumbnailOfFile,
                     )
                     showInstalled -> InstalledAppsScreen(
                         apps = state.installed,

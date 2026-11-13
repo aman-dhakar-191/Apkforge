@@ -3,6 +3,8 @@ package com.amandhakar.apkforge
 import com.amandhakar.apkforge.core.readUpTo
 import android.app.Application
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
@@ -21,6 +23,8 @@ import com.amandhakar.apkforge.build.ImageConverter
 import com.amandhakar.apkforge.build.ImageKind
 import com.amandhakar.apkforge.build.SigningKeys
 import com.amandhakar.apkforge.build.VerifyReport
+import com.amandhakar.apkforge.core.FileKind
+import com.amandhakar.apkforge.core.FileSniffer
 import com.amandhakar.apkforge.core.ResourceEntry
 import com.amandhakar.apkforge.core.SplitKind
 import com.amandhakar.apkforge.core.InspectionResult
@@ -514,6 +518,116 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---- looking inside the APK: previews and the file viewer
+    private val thumbs = android.util.LruCache<String, Bitmap>(80)
+    private var resourcesFor: Pair<String, android.content.res.Resources?>? = null
+
+    /** What opening [entryName] shows. Looks at the file's bytes, not its name, to tell images, binary XML, text and other data apart. */
+    suspend fun openFile(entryName: String): FileView = withContext(Dispatchers.IO) {
+        val d = _state.value.details ?: return@withContext FileView.Failed("No project is open.")
+        val apk = workspace.originalApk(d.project.id) ?: return@withContext FileView.Failed("The project's APK is missing.")
+        try {
+            java.util.zip.ZipFile(apk).use { zip ->
+                val ze = zip.getEntry(entryName) ?: return@withContext FileView.Failed("That file is not in the APK.")
+                if (ze.size > VIEW_LIMIT) return@withContext FileView.Failed("This file is ${formatSize(ze.size)}; Apkforge opens files up to ${VIEW_LIMIT / (1024 * 1024)} MB.")
+                val bytes = zip.getInputStream(ze).use { it.readUpTo(VIEW_LIMIT + 1) }
+                val size = bytes.size.toLong()
+                when (FileSniffer.kind(bytes)) {
+                    FileKind.IMAGE -> decodeForViewing(bytes)
+                    FileKind.COMPILED_XML -> {
+                        val table = (d.resources as? ResourceResult.Ok)?.table
+                        try { FileView.Xml(AxmlDecoder(resolver = table?.let { t -> { id: Int -> t.nameOf(id) } }).decode(bytes), compiled = true, bytes = size) }
+                        catch (e: com.amandhakar.apkforge.inspect.AxmlException) { FileView.Binary(FileSniffer.hexDump(bytes), "This looks like Android's binary XML but could not be decoded (${e.message}). The raw bytes are shown instead.", size) }
+                    }
+                    FileKind.TEXT_XML -> FileView.Xml(String(bytes, Charsets.UTF_8).take(TEXT_LIMIT), compiled = false, bytes = size)
+                    FileKind.TEXT -> String(bytes, Charsets.UTF_8).let { FileView.Text(it.take(TEXT_LIMIT), it.length > TEXT_LIMIT, size) }
+                    FileKind.BINARY -> FileView.Binary(FileSniffer.hexDump(bytes), if (bytes.isEmpty()) "The file is empty." else null, size)
+                }
+            }
+        } catch (e: OutOfMemoryError) {
+            FileView.Failed("This file is too large to open on this phone.")
+        } catch (e: Exception) {
+            FileView.Failed("Could not open the file: ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
+    private fun decodeForViewing(bytes: ByteArray): FileView {
+        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
+        if (o.outWidth <= 0) return FileView.Binary(FileSniffer.hexDump(bytes), "This looks like an image but Android could not decode it.", bytes.size.toLong())
+        var sample = 1
+        while (maxOf(o.outWidth, o.outHeight) / (sample * 2) >= 2048) sample *= 2
+        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+            ?: return FileView.Failed("Android could not decode this image.")
+        return FileView.Image(bmp, o.outWidth, o.outHeight, ImageKind.sniff(bytes).name, bytes.size.toLong())
+    }
+
+    /** A small picture of an image file, or null. Cached. */
+    suspend fun thumbnailOfFile(entryName: String, px: Int): Bitmap? = withContext(Dispatchers.IO) {
+        val d = _state.value.details ?: return@withContext null
+        val key = "${d.project.id}|$entryName|$px"
+        thumbs.get(key)?.let { return@withContext it }
+        try {
+            val apk = workspace.originalApk(d.project.id) ?: return@withContext null
+            val bytes = java.util.zip.ZipFile(apk).use { zip ->
+                val ze = zip.getEntry(entryName) ?: return@withContext null
+                if (ze.size > THUMB_LIMIT) return@withContext null
+                zip.getInputStream(ze).use { it.readUpTo(THUMB_LIMIT + 1) }
+            }
+            val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
+            if (o.outWidth <= 0) return@withContext null
+            var sample = 1
+            while (minOf(o.outWidth, o.outHeight) / (sample * 2) >= px) sample *= 2
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })?.also { thumbs.put(key, it) }
+        } catch (e: Exception) { null } catch (e: OutOfMemoryError) { null }
+    }
+
+    /**
+     * A small picture of a drawable or mipmap resource. A plain image file is decoded directly (the density
+     * closest to xhdpi). Anything else (vectors, shapes, adaptive icons) is drawn by Android itself from the
+     * APK's resources, using the public API; resources that need the app's theme cannot be drawn and give null.
+     */
+    suspend fun thumbnailOfResource(e: ResourceEntry, px: Int): Bitmap? {
+        val files = e.files.filter { f -> ImageKind.expectedFor(f.path).let { it == ImageKind.PNG || it == ImageKind.JPEG || it == ImageKind.WEBP } }
+        if (files.isNotEmpty()) return thumbnailOfFile(bestDensity(files.map { it.density to it.path }), px)
+        if (e.type != "drawable" && e.type != "mipmap") return null
+        return withContext(Dispatchers.IO) {
+            val d = _state.value.details ?: return@withContext null
+            val key = "${d.project.id}|res|${e.id}|$px"
+            thumbs.get(key)?.let { return@withContext it }
+            try {
+                val apk = workspace.originalApk(d.project.id) ?: return@withContext null
+                val res = resourcesOf(d.project.id, apk) ?: return@withContext null
+                val drawable = androidx.core.content.res.ResourcesCompat.getDrawable(res, e.id, null) ?: return@withContext null
+                val bmp = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
+                drawable.setBounds(0, 0, px, px)
+                drawable.draw(android.graphics.Canvas(bmp))
+                thumbs.put(key, bmp); bmp
+            } catch (e: Exception) { null } catch (e: OutOfMemoryError) { null }
+        }
+    }
+
+    private fun resourcesOf(projectId: String, apk: File): android.content.res.Resources? {
+        resourcesFor?.takeIf { it.first == projectId }?.let { return it.second }
+        val pm = getApplication<Application>().packageManager
+        val res = try {
+            val app = pm.getPackageArchiveInfo(apk.path, 0)?.applicationInfo?.also { it.sourceDir = apk.path; it.publicSourceDir = apk.path }
+            app?.let { pm.getResourcesForApplication(it) }
+        } catch (e: Exception) { null }
+        resourcesFor = projectId to res
+        return res
+    }
+
+    private fun bestDensity(files: List<Pair<String?, String>>): String {
+        fun dpi(label: String?): Int = when (label) {
+            null -> 160; "ldpi" -> 120; "mdpi" -> 160; "tvdpi" -> 213; "hdpi" -> 240; "xhdpi" -> 320; "xxhdpi" -> 480; "xxxhdpi" -> 640
+            "anydpi", "nodpi", "other" -> 320
+            else -> label.removeSuffix("dpi").toIntOrNull() ?: 320
+        }
+        return files.minBy { kotlin.math.abs(dpi(it.first) - 320) }.second
+    }
+
     fun message(text: String?) { _state.value = _state.value.copy(message = text) }
 
     private fun displayName(uri: Uri): String? =
@@ -521,6 +635,10 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
             ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
 
     companion object {
+        private const val VIEW_LIMIT = 16 * 1024 * 1024
+        private const val THUMB_LIMIT = 4 * 1024 * 1024
+        private const val TEXT_LIMIT = 400_000
+        private fun formatSize(b: Long) = com.amandhakar.apkforge.ui.formatBytes(b)
         private const val KEY_DEBUG = "debug_log_enabled"
         const val MAX_IMPORT_BYTES = 1024L * 1024 * 1024
     }

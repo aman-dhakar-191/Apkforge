@@ -56,6 +56,14 @@ Works now:
   built yet). Things tied to the original (Google sign-in, push notifications, licence checks) usually
   stop working in the copy. Checked on Apkforge's own 7 MB APK with `aapt2`, `apksigner` and
   `zipalign`; not yet run on a phone.
+- **Previews and a file viewer.** The Resources and Build tabs show a small picture next to every
+  drawable and mipmap (plain image files are decoded directly; vectors, shapes and adaptive icons are
+  drawn by Android itself from the APK's resources, using public APIs; resources that need the app's
+  theme show a dash), and a colour square next to colour values. Tap a resource, or a file in the Files
+  tab, to open it: Apkforge looks at the file's bytes and says what it is. **XML: yes** for Android's
+  compiled (binary) XML, which is shown decoded with references by name (`@drawable/...`),
+  sizes as `8.0dp` / `14.0sp` and `match_parent` / `wrap_content`; **XML: no** for pictures, plain
+  text and other data (hex view). Files up to 16 MB.
 - **Build tab: replace images.** Pick an image resource (every screen-density file it uses is found
   from `resources.arsc`), pick a picture, and Apkforge converts it to the same format and pixel size
   (centre-cropped). A summary of the planned changes is shown, then **Build, sign and check**
@@ -72,7 +80,7 @@ Not built yet: editing layouts, text and colours (planned, in that order), smali
 [docs/toolchain.md](docs/toolchain.md). See
 [docs/plan.md](docs/plan.md).
 
-Status of checking: 145 unit tests pass (archive parsing, path safety, workspace, debug log,
+Status of checking: 151 unit tests pass (archive parsing, path safety, workspace, debug log,
 installed-app filtering and copying, split-set copying, manifest and resource decoding checked against `aapt2` output; all 275 resource names of Apkforge's own APK match; code scanner tested on DEX files built by d8; rebuilt and signed APKs accepted by Android's apksigner, zipalign -P 16 and aapt2) and a release APK builds. **The screens, `PackageManager`
 reading and whether Android lets the app read other apps' APKs have not been run on a device yet.**
 

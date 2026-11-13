@@ -3,16 +3,24 @@ package com.amandhakar.apkforge.ui
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.graphics.Bitmap
 import com.amandhakar.apkforge.BuildUi
+import com.amandhakar.apkforge.FileView
+import com.amandhakar.apkforge.ViewerFile
+import com.amandhakar.apkforge.ViewerTarget
 import com.amandhakar.apkforge.ProjectDetails
+import com.amandhakar.apkforge.build.ImageKind
 import com.amandhakar.apkforge.core.*
 
 private val TABS = listOf("Overview", "Files", "Manifest", "Resources", "Code", "Build")
@@ -33,8 +41,13 @@ fun ProjectScreen(
     onBuild: () -> Unit,
     onExportForged: () -> Unit,
     onInstall: () -> Unit,
+    openFile: suspend (String) -> FileView,
+    thumbOfResource: suspend (ResourceEntry, Int) -> Bitmap?,
+    thumbOfFile: suspend (String, Int) -> Bitmap?,
 ) {
     var tab by remember { mutableIntStateOf(0) }
+    var viewer by remember { mutableStateOf<ViewerTarget?>(null) }
+    viewer?.let { FileViewerScreen(it, openFile) { viewer = null }; return }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             TextButton(onBack) { Text("← Back") }
@@ -45,11 +58,11 @@ fun ProjectScreen(
         }
         when (tab) {
             0 -> Overview(details, onExport, onDelete)
-            1 -> Files(details.inspection)
+            1 -> Files(details.inspection, thumbOfFile) { viewer = it }
             2 -> ManifestTab(details.manifest)
-            3 -> ResourcesTab(details.resources)
+            3 -> ResourcesTab(details.resources, thumbOfResource) { viewer = it }
             4 -> Later("DEX and code view", "Smali and Java-like views are planned for Phase 3. The Files tab lists the DEX files in this APK.")
-            else -> BuildTab(details, build, blockedReason, onCopyAsNew, onSuffix, onLabel, onPickImage, onUnstage, onBuild, onExportForged, onInstall)
+            else -> BuildTab(details, build, blockedReason, onCopyAsNew, onSuffix, onLabel, onPickImage, onUnstage, onBuild, onExportForged, onInstall, thumbOfResource) { viewer = it }
         }
     }
 }
@@ -197,7 +210,7 @@ private fun splitText(split: SplitInfo?, guessSplit: Boolean, heldParts: Int = 0
 }
 
 @Composable
-private fun ResourcesTab(r: ResourceResult?) {
+private fun ResourcesTab(r: ResourceResult?, thumbOfResource: suspend (ResourceEntry, Int) -> Bitmap?, onOpen: (ViewerTarget) -> Unit) {
     when (r) {
         null -> Later("No resource table", "This APK has no resources.arsc.")
         is ResourceResult.Failed -> Later("Resources not readable", r.reason)
@@ -205,6 +218,7 @@ private fun ResourcesTab(r: ResourceResult?) {
             val table = r.table
             var query by remember { mutableStateOf("") }
             var type by remember { mutableStateOf<String?>(null) }
+            var showValue by remember { mutableStateOf<ResourceEntry?>(null) }
             val rows = remember(table, query, type) {
                 table.entries.values.asSequence()
                     .filter { type == null || it.type == type }
@@ -217,18 +231,41 @@ private fun ResourcesTab(r: ResourceResult?) {
                     item { FilterChip(type == null, { type = null }, label = { Text("All") }) }
                     items(table.types) { t -> FilterChip(type == t, { type = t }, label = { Text(t) }) }
                 }
+                Text("Tap a resource to open it. Pictures and drawables show a preview.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
                 LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp)) {
                     items(rows, key = { it.id }) { e ->
-                        Column(Modifier.padding(vertical = 4.dp)) {
-                            Text("${e.type}/${e.name}", style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                (table.displayValue(e) ?: "(no simple value)") + if (e.configCount > 1) "  ·  ${e.configCount} configurations" else "",
-                                style = MaterialTheme.typography.bodySmall,
-                            )
+                        val files = e.files
+                        val color = parseColor(e.value)
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                if (files.isNotEmpty()) onOpen(ViewerTarget("${e.type}/${e.name}", files.map { ViewerFile(it.density ?: "default", it.path) }))
+                                else showValue = e
+                            }.padding(vertical = 4.dp),
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                        ) {
+                            when {
+                                e.type == "drawable" || e.type == "mipmap" -> { Thumb(e.id, 48.dp, { thumbOfResource(e, 96) }); Spacer(Modifier.width(10.dp)) }
+                                color != null -> { Box(Modifier.size(48.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp)).background(color)); Spacer(Modifier.width(10.dp)) }
+                            }
+                            Column(Modifier.weight(1f)) {
+                                Text("${e.type}/${e.name}", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    (table.displayValue(e) ?: "(no simple value)") + if (e.configCount > 1) "  ·  ${e.configCount} configurations" else "",
+                                    style = MaterialTheme.typography.bodySmall, maxLines = 2,
+                                )
+                            }
                         }
                     }
                     if (rows.size == 5000) item { Text("Showing the first 5000. Narrow the search to see more.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 8.dp)) }
                 }
+            }
+            showValue?.let { e ->
+                AlertDialog(
+                    onDismissRequest = { showValue = null },
+                    title = { Text("${e.type}/${e.name}") },
+                    text = { Text(table.displayValue(e) ?: "(no simple value: styles, arrays and plurals only show an item count)") },
+                    confirmButton = { TextButton({ showValue = null }) { Text("Close") } },
+                )
             }
         }
     }
@@ -243,7 +280,7 @@ private fun Row2(label: String, value: String) {
 }
 
 @Composable
-private fun Files(ins: InspectionResult) {
+private fun Files(ins: InspectionResult, thumbOfFile: suspend (String, Int) -> Bitmap?, onOpen: (ViewerTarget) -> Unit) {
     if (ins !is InspectionResult.Ok) { Later("No file list", "The archive could not be read."); return }
     var filter by remember { mutableStateOf<EntryKind?>(null) }
     val shown = remember(ins, filter) { if (filter == null) ins.entries else ins.entries.filter { it.kind == filter } }
@@ -254,11 +291,19 @@ private fun Files(ins: InspectionResult) {
                 FilterChip(filter == k, { filter = k }, label = { Text("${k.name.lowercase().replace('_', ' ')} (${ins.summary.countsByKind[k]})") })
             }
         }
+        Text("Tap a file to open it and see what it is.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp)) {
             items(shown, key = { it.name + it.size + it.compressedSize }) { e ->
-                Column(Modifier.padding(vertical = 4.dp)) {
-                    Text(e.name, style = MaterialTheme.typography.bodyMedium, color = if (e.unsafeName) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
-                    Text(formatBytes(e.size) + if (e.unsafeName) " · unsafe or duplicate name" else "", style = MaterialTheme.typography.bodySmall)
+                val picture = ImageKind.expectedFor(e.name).let { it == ImageKind.PNG || it == ImageKind.JPEG || it == ImageKind.WEBP }
+                Row(
+                    Modifier.fillMaxWidth().clickable(enabled = !e.unsafeName) { onOpen(ViewerTarget(e.name.substringAfterLast('/'), listOf(ViewerFile(e.name, e.name)))) }.padding(vertical = 4.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    if (picture && !e.unsafeName) { Thumb(e.name, 40.dp, { thumbOfFile(e.name, 80) }); Spacer(Modifier.width(10.dp)) }
+                    Column(Modifier.weight(1f)) {
+                        Text(e.name, style = MaterialTheme.typography.bodyMedium, color = if (e.unsafeName) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                        Text(formatBytes(e.size) + if (e.unsafeName) " · unsafe or duplicate name (cannot be opened)" else "", style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
         }
