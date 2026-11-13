@@ -96,11 +96,12 @@ private fun Overview(d: ProjectDetails, onExport: () -> Unit, onDelete: () -> Un
             Row2("Entries", "${s.entryCount} (${formatBytes(s.totalUncompressedBytes)} unpacked)")
             Row2("DEX files", s.dexFiles.joinToString().ifEmpty { "none" })
             Row2("Native libraries", s.nativeAbis.joinToString().ifEmpty { "none" })
-            Row2("Single or split", splitText(d.split, s.looksLikeSplitApk))
+            Row2("Single or split", splitText(d.split, s.looksLikeSplitApk, d.parts.size))
             if (s.unsafeNameCount > 0) {
                 Text("Warning: ${s.unsafeNameCount} entries have unsafe or duplicate names. They will never be unpacked.", color = MaterialTheme.colorScheme.error)
             }
         }
+        if (d.parts.isNotEmpty()) SplitSetCard(d)
         EditabilityCard(d.editability)
         Spacer(Modifier.height(8.dp))
         Button(onExport, Modifier.fillMaxWidth()) { Text("Export original APK (unchanged)") }
@@ -114,6 +115,31 @@ private fun Overview(d: ProjectDetails, onExport: () -> Unit, onDelete: () -> Un
             confirmButton = { TextButton({ confirm = false; onDelete() }) { Text("Delete") } },
             dismissButton = { TextButton({ confirm = false }) { Text("Cancel") } },
         )
+    }
+}
+
+@Composable
+private fun SplitSetCard(d: ProjectDetails) {
+    val total = d.project.sizeBytes + d.parts.sumOf { it.sizeBytes }
+    val abis = (((d.inspection as? InspectionResult.Ok)?.summary?.nativeAbis).orEmpty() + d.parts.flatMap { it.abis }).distinct().sorted()
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Whole set: base + ${d.parts.size} part(s), ${formatBytes(total)}", style = MaterialTheme.typography.titleSmall)
+            Text("Native libraries across the set: ${abis.joinToString().ifEmpty { "none" }}", style = MaterialTheme.typography.bodySmall)
+            if (d.project.declaredSplits > d.project.copiedSplits) {
+                Text("${d.project.declaredSplits - d.project.copiedSplits} part(s) could not be copied.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+            d.parts.forEach { p ->
+                Column(Modifier.padding(top = 4.dp)) {
+                    Text(p.splitName ?: p.fileName, style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        if (!p.readable) "${formatBytes(p.sizeBytes)} · could not be read"
+                        else "${formatBytes(p.sizeBytes)}" + (if (p.abis.isNotEmpty()) " · native: ${p.abis.joinToString()}" else "") + (if (p.resourceFiles > 0) " · ${p.resourceFiles} resource files" else ""),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -146,8 +172,9 @@ private fun EditabilityCard(r: EditabilityReport?) {
     }
 }
 
-private fun splitText(split: SplitInfo?, guessSplit: Boolean): String = when {
+private fun splitText(split: SplitInfo?, guessSplit: Boolean, heldParts: Int = 0): String = when {
     split == null -> if (guessSplit) "Probably one part of a split APK (no code or resource table). The base APK and other parts are needed too." else "Looks like a complete APK (guessed from its file list, because the manifest could not be read)"
+    split.kind == SplitKind.BASE_NEEDS_SPLITS && heldParts > 0 -> "Base APK of a split app" + (split.detail?.let { " (needs: $it)" } ?: "") + ". Apkforge holds this base and $heldParts other part(s): see below. The parts are copies from this phone, so they match this phone's processor, screen density and languages."
     split.kind == SplitKind.BASE_NEEDS_SPLITS -> "Base APK of a split app" + (split.detail?.let { " (needs: $it)" } ?: "") + ". It can't run alone: its other parts (native libraries, screen-density resources, languages) are separate files. Apkforge copies only this part for now."
     split.kind == SplitKind.SPLIT_PART -> "One part of a split app" + (split.detail?.let { " (\"$it\")" } ?: "") + ", not a whole app. It needs the base APK."
     else -> "Complete APK (from its manifest: no split parts required)"

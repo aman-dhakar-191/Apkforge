@@ -63,12 +63,27 @@ object Editability {
         hasNativeLibs: Boolean,
         packerLibs: List<String>,
         scan: DexScan?,
+        /** Imported from an installed system app. */
+        systemApp: Boolean = false,
+        /** Other parts Android listed for the app, and how many of them Apkforge copied. */
+        splitsDeclared: Int = 0,
+        splitsHeld: Int = 0,
     ): EditabilityReport {
         val f = ArrayList<Finding>()
 
+        if (systemApp) f += Finding(Severity.BLOCKER, "Part of the phone's own software",
+            "This is a system app. A modified copy would have a different signature, so it cannot replace the built-in one, and Android treats system apps differently from ordinary ones.")
+
         when (split?.kind) {
-            SplitKind.BASE_NEEDS_SPLITS -> f += Finding(Severity.BLOCKER, "Needs its other parts",
-                "This is the base of a split app. It cannot run without its other APK files, and Apkforge only holds this one.")
+            SplitKind.BASE_NEEDS_SPLITS -> f += Finding(Severity.BLOCKER, "Split app: whole-set editing is not available",
+                when {
+                    splitsDeclared > 0 && splitsHeld == splitsDeclared ->
+                        "This is a split app. Apkforge holds the base and all $splitsHeld other parts, but changing and re-signing a whole set is not available in this version."
+                    splitsHeld > 0 ->
+                        "This is a split app. Apkforge holds the base and $splitsHeld of $splitsDeclared other parts; the rest could not be copied. Changing and re-signing a whole set is not available in this version."
+                    else ->
+                        "This is the base of a split app. It cannot run without its other APK files, and Apkforge only holds this one."
+                })
             SplitKind.SPLIT_PART -> f += Finding(Severity.BLOCKER, "Only one part of an app",
                 "This file is not a whole app. It needs the base APK.")
             else -> {}
@@ -113,3 +128,14 @@ object Editability {
 interface DexScanner {
     fun scan(apk: File): DexScan
 }
+
+/** One other part of a split app that Apkforge holds, with what it carries. */
+data class SplitPart(
+    val fileName: String,
+    val sizeBytes: Long,
+    /** The part's own name from its manifest, for example "config.arm64_v8a". */
+    val splitName: String?,
+    val abis: List<String>,
+    val resourceFiles: Int,
+    val readable: Boolean,
+)

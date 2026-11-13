@@ -32,6 +32,7 @@ class InstalledAppsReader(private val context: Context) {
                     versionCode = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong(),
                     sourceDir = app.sourceDir,
                     splitCount = app.splitSourceDirs?.size ?: 0,
+                    splitDirs = app.splitSourceDirs?.toList().orEmpty(),
                     isSystem = app.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0,
                 )
             } catch (_: PackageManager.NameNotFoundException) {

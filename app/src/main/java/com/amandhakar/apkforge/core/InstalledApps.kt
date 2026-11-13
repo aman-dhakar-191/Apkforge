@@ -9,6 +9,8 @@ data class InstalledApp(
     val sourceDir: String?,
     val splitCount: Int,
     val isSystem: Boolean,
+    /** Paths Android reports for the other parts of a split app. */
+    val splitDirs: List<String> = emptyList(),
 )
 
 object InstalledApps {
