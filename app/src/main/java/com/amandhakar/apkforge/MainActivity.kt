@@ -1,0 +1,99 @@
+package com.amandhakar.apkforge
+
+import android.content.Intent
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
+import com.amandhakar.apkforge.ui.*
+
+class MainActivity : ComponentActivity() {
+    private val vm: ForgeViewModel by viewModels()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            MaterialTheme(colorScheme = if (androidx.compose.foundation.isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
+                Surface(Modifier.fillMaxSize()) { App() }
+            }
+        }
+    }
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    private fun App() {
+        val state by vm.state.collectAsState()
+        var showSettings by remember { mutableStateOf(false) }
+
+        val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) vm.importApk(uri)
+        }
+        val saveAs = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/vnd.android.package-archive")) { uri ->
+            val id = vm.state.value.details?.project?.id
+            if (uri != null && id != null) vm.exportOriginal(id, uri)
+        }
+
+        BackHandler(enabled = showSettings || state.details != null) {
+            if (showSettings) showSettings = false else vm.close()
+        }
+
+        Scaffold(
+            snackbarHost = {
+                state.message?.let {
+                    Snackbar(Modifier.padding(16.dp), action = { TextButton({ vm.message(null) }) { Text("OK") } }) { Text(it) }
+                }
+            },
+        ) { pad ->
+            Box(Modifier.padding(pad).fillMaxSize()) {
+                when {
+                    showSettings -> SettingsScreen(
+                        state = state,
+                        onToggle = vm::setDebugLog,
+                        onRefresh = vm::refreshLog,
+                        onClear = vm::clearLog,
+                        onShare = { shareLog() },
+                        onBack = { showSettings = false },
+                    )
+                    state.details != null -> ProjectScreen(
+                        details = state.details!!,
+                        onBack = vm::close,
+                        onExport = { saveAs.launch(exportName(state.details!!)) },
+                        onDelete = { vm.delete(state.details!!.project.id) },
+                    )
+                    else -> HomeScreen(
+                        projects = state.projects,
+                        onImport = { pick.launch(arrayOf("application/vnd.android.package-archive", "application/octet-stream", "*/*")) },
+                        onOpen = vm::open,
+                        onDelete = vm::delete,
+                        onSettings = { vm.refreshLog(); showSettings = true },
+                    )
+                }
+                state.busy?.let { BusyOverlay(it) }
+            }
+        }
+    }
+
+    private fun exportName(d: ProjectDetails): String =
+        (d.metadata?.packageName ?: "app") + "-original.apk"
+
+    private fun shareLog() {
+        val file = vm.logForSharing()
+        if (file == null) { vm.message("The log is empty."); return }
+        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(Intent.createChooser(send, "Share debug log"))
+    }
+}

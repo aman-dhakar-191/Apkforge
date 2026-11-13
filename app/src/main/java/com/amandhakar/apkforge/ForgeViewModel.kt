@@ -1,0 +1,177 @@
+package com.amandhakar.apkforge
+
+import android.app.Application
+import android.content.Context
+import android.net.Uri
+import android.os.Build
+import android.provider.OpenableColumns
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.amandhakar.apkforge.core.InspectionResult
+import com.amandhakar.apkforge.inspect.ApkMetadata
+import com.amandhakar.apkforge.inspect.ApkMetadataReader
+import com.amandhakar.apkforge.inspect.ZipApkInspector
+import com.amandhakar.apkforge.log.DebugLog
+import com.amandhakar.apkforge.workspace.ImportTooLargeException
+import com.amandhakar.apkforge.workspace.Project
+import com.amandhakar.apkforge.workspace.Workspace
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+
+data class ProjectDetails(
+    val project: Project,
+    val inspection: InspectionResult,
+    val metadata: ApkMetadata?,
+)
+
+data class UiState(
+    val projects: List<Project> = emptyList(),
+    val details: ProjectDetails? = null,
+    val busy: String? = null,
+    val message: String? = null,
+    val debugLogEnabled: Boolean = false,
+    val logText: String = "",
+)
+
+class ForgeViewModel(app: Application) : AndroidViewModel(app) {
+    private val prefs = app.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    private val workspace = Workspace(File(app.filesDir, "projects"))
+    private val log = DebugLog(File(app.filesDir, "debug.log"), isEnabled = { prefs.getBoolean(KEY_DEBUG, false) })
+    private val inspector = ZipApkInspector()
+    private val metadataReader = ApkMetadataReader(app)
+
+    private val _state = MutableStateFlow(UiState(debugLogEnabled = prefs.getBoolean(KEY_DEBUG, false)))
+    val state: StateFlow<UiState> = _state
+
+    init { refreshProjects() }
+
+    fun refreshProjects() {
+        viewModelScope.launch {
+            val list = withContext(Dispatchers.IO) { workspace.list() }
+            _state.value = _state.value.copy(projects = list)
+        }
+    }
+
+    fun importApk(uri: Uri) {
+        _state.value = _state.value.copy(busy = "Importing APK…", message = null)
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                try {
+                    val name = displayName(uri) ?: "APK"
+                    val project = getApplication<Application>().contentResolver.openInputStream(uri)?.use {
+                        workspace.importApk(name, it, MAX_IMPORT_BYTES)
+                    } ?: error("Android would not open that file")
+                    log.event("import_ok", "bytes" to project.sizeBytes)
+                    Result.success(project)
+                } catch (e: ImportTooLargeException) {
+                    log.event("import_failed", "reason" to "too_large")
+                    Result.failure(IllegalStateException("That file is larger than ${MAX_IMPORT_BYTES / (1024 * 1024)} MB, which is the limit."))
+                } catch (e: Exception) {
+                    log.event("import_failed", "reason" to e.javaClass.simpleName)
+                    Result.failure(IllegalStateException("Could not import the file: ${e.message ?: e.javaClass.simpleName}"))
+                }
+            }
+            result.onSuccess { open(it.id) }
+            result.onFailure { _state.value = _state.value.copy(busy = null, message = it.message) }
+            refreshProjects()
+        }
+    }
+
+    fun open(id: String) {
+        _state.value = _state.value.copy(busy = "Reading APK…", message = null)
+        viewModelScope.launch {
+            val details = withContext(Dispatchers.IO) {
+                val project = workspace.get(id) ?: return@withContext null
+                val apk = workspace.originalApk(id) ?: return@withContext null
+                val inspection = inspector.inspect(apk)
+                val meta = if (inspection is InspectionResult.Ok) metadataReader.read(apk) else null
+                log.event(
+                    "inspect",
+                    "result" to (if (inspection is InspectionResult.Ok) "ok" else (inspection as InspectionResult.Rejected).reason),
+                    "entries" to ((inspection as? InspectionResult.Ok)?.summary?.entryCount ?: 0),
+                    "metadata" to (meta != null),
+                )
+                ProjectDetails(project, inspection, meta)
+            }
+            _state.value = _state.value.copy(
+                busy = null,
+                details = details,
+                message = if (details == null) "That project could not be found." else null,
+            )
+        }
+    }
+
+    fun close() { _state.value = _state.value.copy(details = null) }
+
+    fun delete(id: String) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { workspace.delete(id); log.event("project_deleted") }
+            if (_state.value.details?.project?.id == id) close()
+            refreshProjects()
+        }
+    }
+
+    fun exportOriginal(id: String, dest: Uri) {
+        _state.value = _state.value.copy(busy = "Exporting…")
+        viewModelScope.launch {
+            val msg = withContext(Dispatchers.IO) {
+                try {
+                    getApplication<Application>().contentResolver.openOutputStream(dest)?.use { workspace.exportOriginal(id, it) }
+                        ?: error("Android would not open the destination")
+                    log.event("export_ok")
+                    "Exported the original, unchanged APK."
+                } catch (e: Exception) {
+                    log.event("export_failed", "reason" to e.javaClass.simpleName)
+                    "Export failed: ${e.message ?: e.javaClass.simpleName}"
+                }
+            }
+            _state.value = _state.value.copy(busy = null, message = msg)
+        }
+    }
+
+    fun setDebugLog(on: Boolean) {
+        prefs.edit().putBoolean(KEY_DEBUG, on).apply()
+        if (on) log.event("debug_log_enabled", "sdk" to Build.VERSION.SDK_INT, "app" to BuildConfig.VERSION_NAME)
+        _state.value = _state.value.copy(debugLogEnabled = on)
+        refreshLog()
+    }
+
+    fun refreshLog() {
+        viewModelScope.launch {
+            val text = withContext(Dispatchers.IO) { log.read() }
+            _state.value = _state.value.copy(logText = text)
+        }
+    }
+
+    fun clearLog() {
+        viewModelScope.launch { withContext(Dispatchers.IO) { log.clear() }; refreshLog() }
+    }
+
+    /** A copy of the log with a short header, for the user to share on purpose. Null when empty. */
+    fun logForSharing(): File? {
+        val text = log.read()
+        if (text.isBlank()) return null
+        val dir = File(getApplication<Application>().cacheDir, "shared_logs").apply { mkdirs() }
+        val out = File(dir, "apkforge-debug-log.txt")
+        out.writeText(
+            "Apkforge ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})\n" +
+                "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}), ${Build.MANUFACTURER} ${Build.MODEL}\n\n" + text,
+        )
+        return out
+    }
+
+    fun message(text: String?) { _state.value = _state.value.copy(message = text) }
+
+    private fun displayName(uri: Uri): String? =
+        getApplication<Application>().contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+
+    companion object {
+        private const val KEY_DEBUG = "debug_log_enabled"
+        const val MAX_IMPORT_BYTES = 1024L * 1024 * 1024
+    }
+}
