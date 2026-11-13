@@ -1,6 +1,8 @@
 package com.amandhakar.apkforge.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
@@ -39,7 +41,8 @@ fun BuildTab(
             .filter { query.isBlank() || it.name.contains(query, true) }
             .sortedWith(compareBy({ it.type }, { it.name })).take(300).toList()
     }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(Modifier.fillMaxSize()) {
+    LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Text(
                 "Changes go into a separate copy of the app. The original file in Apkforge is never changed, and the copy is signed with Apkforge's own key.",
@@ -103,22 +106,6 @@ fun BuildTab(
             }
         }
 
-        if (b.staged.isNotEmpty() || b.copyAsNew) {
-            item { HorizontalDivider() }
-            item { Text("Planned changes", style = MaterialTheme.typography.titleMedium) }
-            if (b.copyAsNew) item { Text("Install as a separate app: ${d.metadata?.packageName ?: "?"}.${b.suffix}, named \"${b.label}\"", style = MaterialTheme.typography.bodyMedium) }
-            items(b.staged, key = { it.resource }) { s ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Replace ${s.resource} (${s.replacements.size} file${if (s.replacements.size == 1) "" else "s"})", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                    TextButton({ onRemove(s.resource) }, enabled = b.running == null) { Text("Remove") }
-                }
-            }
-            item { Button(onBuild, Modifier.fillMaxWidth(), enabled = b.running == null) { Text("Build, sign and check") } }
-        }
-
-        b.running?.let { item { Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp); Spacer(Modifier.width(10.dp)); Text(it) } } }
-        b.problem?.let { item { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) } }
-
         b.outcome?.let { o ->
             item { HorizontalDivider() }
             item {
@@ -148,11 +135,55 @@ fun BuildTab(
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onExport) { Text("Export APK") }
-                            OutlinedButton(onInstall, enabled = o.report.verified) { Text("Install…") }
-                        }
                     }
+                }
+            }
+        }
+    }
+    if (blocked == null) BuildBar(d, b, onRemove, onBuild, onExport, onInstall)
+    }
+}
+
+/** Pinned under the list, so the planned changes and the Build button never need scrolling to. */
+@Composable
+private fun BuildBar(
+    d: ProjectDetails,
+    b: BuildUi,
+    onRemove: (String) -> Unit,
+    onBuild: () -> Unit,
+    onExport: () -> Unit,
+    onInstall: () -> Unit,
+) {
+    Surface(Modifier.fillMaxWidth(), tonalElevation = 4.dp, shadowElevation = 8.dp) {
+        Column(
+            Modifier.heightIn(max = 300.dp).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text("Planned changes", style = MaterialTheme.typography.titleSmall)
+            if (b.copyAsNew) Text("• Install as a separate app: ${d.metadata?.packageName ?: "?"}.${b.suffix}, named \"${b.label}\"", style = MaterialTheme.typography.bodySmall)
+            b.staged.forEach { s ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("• Replace ${s.resource} (${s.replacements.size} file${if (s.replacements.size == 1) "" else "s"})", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    TextButton({ onRemove(s.resource) }, enabled = b.running == null) { Text("Remove") }
+                }
+            }
+            if (!b.copyAsNew && b.staged.isEmpty()) Text("Nothing yet. Pick an image above.", style = MaterialTheme.typography.bodySmall)
+            Button(onBuild, Modifier.fillMaxWidth(), enabled = b.running == null && (b.staged.isNotEmpty() || b.copyAsNew)) { Text("Build, sign and check") }
+            b.running?.let { Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp); Spacer(Modifier.width(10.dp)); Text(it, style = MaterialTheme.typography.bodySmall) } }
+            b.problem?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            b.outcome?.let { o ->
+                Text(
+                    if (o.report.verified) "Built and signed. The signature check passed." else "Built, but the signature check FAILED.",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = if (o.report.verified) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                )
+                Text(
+                    formatBytes(o.sizeBytes) + (o.newPackage?.let { " · installs beside the original as $it" } ?: "") + " · full details at the bottom of the list",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onExport) { Text("Export APK") }
+                    OutlinedButton(onInstall, enabled = o.report.verified) { Text("Install…") }
                 }
             }
         }
