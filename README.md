@@ -64,6 +64,15 @@ Works now:
   compiled (binary) XML, which is shown decoded with references by name (`@drawable/...`),
   sizes as `8.0dp` / `14.0sp` and `match_parent` / `wrap_content`; **XML: no** for pictures, plain
   text and other data (hex view). Files up to 16 MB.
+- **App icon finder and drawings.** The Build tab starts with an **App icon** section found from the
+  manifest: for an adaptive icon it lists the foreground and background pictures (and the whole icon as
+  one flat picture). The list below shows *every* drawable and mipmap, not only picture files. A
+  vector or other XML drawing can be replaced by your picture: Android loads a drawable as a drawing when its
+  file name ends in `.xml`, so the file is renamed `.png` and the file path in `resources.arsc` is patched in
+  place (`xml` and `png` are both three letters, so nothing in the table moves). The picture is made 4 pixels
+  per dp of the drawing's size (432 px when it has none). Colours are not replaceable yet.
+  Checked on Apkforge's own APK: `aapt2` reads the icon foreground as `res/Qr.png`, the adaptive icon is
+  untouched, and `apksigner` and `zipalign` pass.
 - **Build tab: replace images.** Pick an image resource (every screen-density file it uses is found
   from `resources.arsc`), pick a picture, and Apkforge converts it to the same format and pixel size
   (centre-cropped). A summary of the planned changes is shown, then **Build, sign and check**
@@ -80,7 +89,7 @@ Not built yet: editing layouts, text and colours (planned, in that order), smali
 [docs/toolchain.md](docs/toolchain.md). See
 [docs/plan.md](docs/plan.md).
 
-Status of checking: 151 unit tests pass (archive parsing, path safety, workspace, debug log,
+Status of checking: 161 unit tests pass (archive parsing, path safety, workspace, debug log,
 installed-app filtering and copying, split-set copying, manifest and resource decoding checked against `aapt2` output; all 275 resource names of Apkforge's own APK match; code scanner tested on DEX files built by d8; rebuilt and signed APKs accepted by Android's apksigner, zipalign -P 16 and aapt2) and a release APK builds. **The screens, `PackageManager`
 reading and whether Android lets the app read other apps' APKs have not been run on a device yet.**
 

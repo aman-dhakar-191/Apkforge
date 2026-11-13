@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.amandhakar.apkforge.BuildUi
 import com.amandhakar.apkforge.ProjectDetails
+import com.amandhakar.apkforge.build.IconFinder
 import com.amandhakar.apkforge.build.ImageKind
 import com.amandhakar.apkforge.core.ResourceEntry
 import com.amandhakar.apkforge.core.ResourceResult
@@ -40,9 +41,9 @@ fun BuildTab(
     var query by remember { mutableStateOf("") }
     val images = remember(table, query) {
         table?.entries?.values.orEmpty().asSequence()
-            .filter { (it.type == "drawable" || it.type == "mipmap") && it.files.any { f -> isPlainImage(f.path) } }
+            .filter { (it.type == "drawable" || it.type == "mipmap") && it.files.isNotEmpty() }
             .filter { query.isBlank() || it.name.contains(query, true) }
-            .sortedWith(compareBy({ it.type }, { it.name })).take(300).toList()
+            .sortedWith(compareBy({ it.type }, { it.name })).take(3000).toList()
     }
     Column(Modifier.fillMaxSize()) {
     LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -84,32 +85,53 @@ fun BuildTab(
                 }
             }
         }
-        item { Text("Replace an image", style = MaterialTheme.typography.titleMedium) }
+        if (d.iconParts.isNotEmpty()) item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("App icon", style = MaterialTheme.typography.titleSmall)
+                    Text("Found from the app's manifest. This is the picture shown on the home screen.", style = MaterialTheme.typography.bodySmall)
+                    d.iconParts.forEach { part ->
+                        val staged = part.entry != null && b.staged.any { it.resource == "${part.entry.type}/${part.entry.name}" }
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            if (part.entry != null) { Thumb(part.entry.id, 48.dp, { thumbOfResource(part.entry, 96) }); Spacer(Modifier.width(10.dp)) }
+                            Column(Modifier.weight(1f)) {
+                                Text(part.role, style = MaterialTheme.typography.bodyMedium)
+                                (if (staged) "Will be replaced" else part.note)?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = if (staged) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
+                            }
+                            if (part.replaceable && part.entry != null) OutlinedButton({ onPick(part.entry) }, enabled = b.running == null) { Text(if (staged) "Change" else "Replace…") }
+                        }
+                    }
+                }
+            }
+        }
+        item { Text("Replace a picture", style = MaterialTheme.typography.titleMedium) }
         item {
             Text(
-                "Pick an image resource, then a picture from your phone. Apkforge converts it to the same format and pixel size as the original (centre-cropped, not stretched) and uses it for every screen density. " +
-                    "App icons are often built from separate foreground and background images: replace those.",
+                "Pick a resource, then a picture from your phone. Apkforge converts it to the same format and pixel size as the original (centre-cropped, not stretched) and uses it for every screen density. " +
+                    "A vector or other drawing is replaced by your picture. Images are changed only where the app uses them: names like common_..., abc_... and notification_... come from libraries and are usually not visible. " +
+                    "Use the App icon section above for the home-screen icon.",
                 style = MaterialTheme.typography.bodySmall,
             )
         }
-        item { OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), label = { Text("Search images by name") }, singleLine = true) }
-        if (images.isEmpty()) item { Text("No replaceable images found.", style = MaterialTheme.typography.bodySmall) }
+        item { OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), label = { Text("Search by name (${images.size} drawables)") }, singleLine = true) }
+        if (images.isEmpty()) item { Text("No drawables found.", style = MaterialTheme.typography.bodySmall) }
         items(images, key = { it.id }) { e ->
             val staged = b.staged.any { it.resource == "${e.type}/${e.name}" }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Thumb(e.id, 48.dp, { thumbOfResource(e, 96) }, Modifier.clickable {
-                    onOpen(com.amandhakar.apkforge.ViewerTarget("${e.type}/${e.name}", e.files.filter { isPlainImage(it.path) }.map { com.amandhakar.apkforge.ViewerFile(it.density ?: "default", it.path) }))
+                    onOpen(com.amandhakar.apkforge.ViewerTarget("${e.type}/${e.name}", e.files.map { com.amandhakar.apkforge.ViewerFile(it.density ?: "default", it.path) }))
                 })
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text("${e.type}/${e.name}", style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        e.files.filter { isPlainImage(it.path) }.joinToString { it.density ?: "default" } + if (staged) "  ·  will be replaced" else "",
+                        e.files.joinToString { (it.density ?: "default") + if (it.path.endsWith(".xml")) " (drawing)" else if (it.path.endsWith(".9.png")) " (stretchable)" else "" } +
+                            (if (!IconFinder.replaceable(e)) "  ·  can't be replaced yet" else "") + if (staged) "  ·  will be replaced" else "",
                         style = MaterialTheme.typography.bodySmall,
                         color = if (staged) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                OutlinedButton({ onPick(e) }, enabled = b.running == null) { Text(if (staged) "Change" else "Replace…") }
+                OutlinedButton({ onPick(e) }, enabled = b.running == null && IconFinder.replaceable(e)) { Text(if (staged) "Change" else "Replace…") }
             }
         }
 
@@ -170,7 +192,9 @@ private fun BuildBar(
             if (b.copyAsNew) Text("• Install as a separate app: ${d.metadata?.packageName ?: "?"}.${b.suffix}, named \"${b.label}\"", style = MaterialTheme.typography.bodySmall)
             b.staged.forEach { s ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("• Replace ${s.resource} (${s.replacements.size} file${if (s.replacements.size == 1) "" else "s"})", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    Thumb(s.resource, 36.dp, { previewOf(s.replacements.values.first(), 72) })
+                    Spacer(Modifier.width(8.dp))
+                    Text("Replace ${s.resource} (${s.replacements.size} file${if (s.replacements.size == 1) "" else "s"}" + (if (s.renames.isNotEmpty()) ", drawing → picture" else "") + ")", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
                     TextButton({ onRemove(s.resource) }, enabled = b.running == null) { Text("Remove") }
                 }
             }

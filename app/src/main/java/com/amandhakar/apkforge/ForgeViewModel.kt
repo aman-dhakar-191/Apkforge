@@ -11,6 +11,9 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.amandhakar.apkforge.build.ApkChecks
+import com.amandhakar.apkforge.build.ArscPaths
+import com.amandhakar.apkforge.build.IconFinder
+import com.amandhakar.apkforge.build.IconPart
 import com.amandhakar.apkforge.build.CloneResult
 import com.amandhakar.apkforge.build.CloneSpec
 import com.amandhakar.apkforge.build.PackageClone
@@ -69,6 +72,8 @@ data class ProjectDetails(
     val editability: EditabilityReport? = null,
     /** The other parts of a split app that were copied (empty for a whole APK). */
     val parts: List<SplitPart> = emptyList(),
+    /** The app's launcher icon as pictures to replace (adaptive icons have a foreground and a background). */
+    val iconParts: List<IconPart> = emptyList(),
 )
 
 data class UiState(
@@ -90,7 +95,13 @@ data class UiState(
 data class AccessProblem(val appLabel: String, val explanation: String)
 
 /** A picture the user chose for one resource, already converted for every file that resource uses. */
-class StagedImage(val resource: String, val replacements: Map<String, ByteArray>)
+class StagedImage(
+    val resource: String,
+    /** New bytes keyed by the file's name in the original APK. */
+    val replacements: Map<String, ByteArray>,
+    /** Files whose name changes too: a ".xml" drawing that becomes a ".png" picture (old name to new name). */
+    val renames: Map<String, String> = emptyMap(),
+)
 
 class BuildOutcome(
     val apk: File, val report: VerifyReport, val sizeBytes: Long, val fingerprint: String,
@@ -198,7 +209,14 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                     "resources" to (if (resources is ResourceResult.Ok) resources.table.entries.size else if (resources == null) "none" else "failed"),
                     "split" to (split?.kind ?: "unknown"),
                 )
-                ProjectDetails(project, inspection, meta, manifest, resources, split, parts = splitReader.read(workspace.splitFiles(id)))
+                val icon = try {
+                    val table = (resources as? ResourceResult.Ok)?.table
+                    if (table == null) emptyList() else java.util.zip.ZipFile(apk).use { z ->
+                        val m = z.getEntry("AndroidManifest.xml")?.let { e -> z.getInputStream(e).use { it.readUpTo(8 * 1024 * 1024) } }
+                        if (m == null) emptyList() else IconFinder.find(m, table) { p -> z.getEntry(p)?.takeIf { it.size < 1024 * 1024 }?.let { e -> z.getInputStream(e).use { it.readUpTo(1024 * 1024) } } }
+                    }
+                } catch (e: Exception) { emptyList() }
+                ProjectDetails(project, inspection, meta, manifest, resources, split, parts = splitReader.read(workspace.splitFiles(id)), iconParts = icon)
             }
             if (details != null) computeEditability(details)
             _state.value = _state.value.copy(
@@ -409,7 +427,10 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                     val targets = entry.files.filter { f ->
                         !f.path.endsWith(".9.png") && !f.path.endsWith(".xml") && ImageKind.expectedFor(f.path).let { it == ImageKind.PNG || it == ImageKind.JPEG || it == ImageKind.WEBP }
                     }
-                    if (targets.isEmpty()) return@withContext null to "This resource has no plain image files Apkforge can replace (it may be a stretchable image or a vector)."
+                    // drawings (vectors, shapes, adaptive icons) become a picture of the same shape
+                    val drawings = if (entry.type == "drawable" || entry.type == "mipmap") entry.files.filter { it.path.endsWith(".xml") } else emptyList()
+                    if (targets.isEmpty() && drawings.isEmpty()) return@withContext null to "This resource has no picture files or drawings Apkforge can replace (it may be a stretchable image)."
+                    val renames = LinkedHashMap<String, String>()
                     val out = LinkedHashMap<String, ByteArray>()
                     val cache = HashMap<Triple<ImageKind, Int, Int>, ByteArray?>()
                     java.util.zip.ZipFile(apk).use { zip ->
@@ -422,9 +443,17 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                                 ?: return@withContext null to "That picture could not be read as an image."
                         }
                     }
-                    for ((path, bytes) in out) EditPlan.problem(ApkEdit.ReplaceFile(path, bytes), entries)?.let { return@withContext null to it }
-                    log.event("image_staged", "files" to out.size)
-                    StagedImage("${entry.type}/${entry.name}", out) to null
+                    if (drawings.isNotEmpty()) {
+                        val (w, h) = drawingSizePx(d.project.id, apk, entry)
+                        val png = ImageConverter.convert(picked, ImageKind.PNG, w, h) ?: return@withContext null to "That picture could not be read as an image."
+                        for (f in drawings) { out[f.path] = png; renames[f.path] = f.path.removeSuffix("xml") + "png" }
+                    }
+                    for ((path, bytes) in out) {
+                        val edit = if (path in renames) ApkEdit.ReplaceDrawingWithPicture(path, bytes) else ApkEdit.ReplaceFile(path, bytes)
+                        EditPlan.problem(edit, entries)?.let { return@withContext null to it }
+                    }
+                    log.event("image_staged", "files" to out.size, "drawings" to renames.size)
+                    StagedImage("${entry.type}/${entry.name}", out, renames) to null
                 } catch (e: OutOfMemoryError) {
                     null to "That picture is too large to process on this phone."
                 } catch (e: Exception) {
@@ -461,18 +490,25 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                 try {
                     val apk = workspace.originalApk(d.project.id) ?: return@withContext null to "The project's APK is missing."
                     val entries = (d.inspection as InspectionResult.Ok).entries
-                    val edits = staged.flatMap { s -> s.replacements.map { (p, b) -> ApkEdit.ReplaceFile(p, b) } }
+                    val renames = LinkedHashMap<String, String>().also { m -> staged.forEach { m.putAll(it.renames) } }
+                    val edits: List<ApkEdit> = staged.flatMap { s -> s.replacements.map { (p, b) -> if (p in renames) ApkEdit.ReplaceDrawingWithPicture(p, b) else ApkEdit.ReplaceFile(p, b) } }
                     for (e in edits) EditPlan.problem(e, entries)?.let { return@withContext null to it }
                     val replacements = LinkedHashMap<String, ByteArray>()
-                    edits.forEach { replacements[it.entryName] = (it as ApkEdit.ReplaceFile).bytes }
+                    edits.forEach { replacements[it.entryName] = if (it is ApkEdit.ReplaceFile) it.bytes else (it as ApkEdit.ReplaceDrawingWithPicture).bytes }
+                    // the resource table must point at the new ".png" names (patched in place), before anything else edits it
+                    val patchedArsc = if (renames.isEmpty()) null else ArscPaths.xmlToPng(
+                        java.util.zip.ZipFile(apk).use { z -> z.getInputStream(z.getEntry("resources.arsc") ?: error("The APK has no resource table")).use { it.readUpTo(96 * 1024 * 1024) } },
+                        renames.keys,
+                    )
+                    if (patchedArsc != null) replacements["resources.arsc"] = patchedArsc
                     var clone: CloneResult.Ok? = null
                     if (ui.copyAsNew) {
-                        when (val c = PackageClone.prepare(apk, CloneSpec(oldPackage!!, ui.suffix, ui.label))) {
+                        when (val c = PackageClone.prepare(apk, CloneSpec(oldPackage!!, ui.suffix, ui.label), arscOverride = patchedArsc)) {
                             is CloneResult.Unsupported -> return@withContext null to c.reason
                             is CloneResult.Ok -> { clone = c; replacements.putAll(c.replacements) }
                         }
                     }
-                    rebuilder.rebuild(apk, unsigned, replacements)
+                    rebuilder.rebuild(apk, unsigned, replacements, renames)
                     val hadKey = keys.exists()
                     val identity = keys.loadOrCreate()
                     signing.sign(unsigned, signed, identity, d.metadata?.minSdk ?: 23)
@@ -607,6 +643,18 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) { null } catch (e: OutOfMemoryError) { null }
         }
     }
+
+    /**
+     * The size a picture for a drawing should have. A vector or shape has a size in dp; the picture gets four
+     * pixels per dp, which is sharp on most screens. When the size is unknown (shapes often have none) it is 432 px.
+     */
+    private fun drawingSizePx(projectId: String, apk: File, e: ResourceEntry): Pair<Int, Int> = try {
+        val res = resourcesOf(projectId, apk)
+        val d = res?.let { androidx.core.content.res.ResourcesCompat.getDrawable(it, e.id, null) }
+        val dpi = res?.displayMetrics?.densityDpi ?: 160
+        val w = d?.intrinsicWidth ?: -1; val h = d?.intrinsicHeight ?: -1
+        if (w > 0 && h > 0) (w * 160f / dpi * 4).toInt().coerceIn(48, 1024) to (h * 160f / dpi * 4).toInt().coerceIn(48, 1024) else 432 to 432
+    } catch (x: Exception) { 432 to 432 }
 
     private fun resourcesOf(projectId: String, apk: File): android.content.res.Resources? {
         resourcesFor?.takeIf { it.first == projectId }?.let { return it.second }

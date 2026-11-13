@@ -31,6 +31,31 @@ internal object StringPool {
         return result
     }
 
+    /** Where the characters of string [index] sit: (offset, byte length, isUtf8). For patching a string in place. */
+    fun charData(b: ByteBuffer, start: Int, limit: Int, index: Int): Triple<Int, Int, Boolean> {
+        need(start >= 0 && start + 28 <= limit, "short string pool")
+        val size = b.getInt(start + 4)
+        need(size >= 28 && start + size.toLong() <= limit, "string pool runs past its container")
+        val end = start + size
+        val count = b.getInt(start + 8)
+        need(index in 0 until count, "no such string")
+        val utf8 = b.getInt(start + 16) and 0x100 != 0
+        val s = start.toLong() + b.getInt(start + 20) + b.getInt(start + 28 + index * 4)
+        need(s >= start && s < end, "string offset out of range")
+        var p = s.toInt()
+        if (utf8) {
+            fun skipLen(): Int { need(p < end, "string runs past the chunk"); var n = b.get(p++).toInt() and 0xFF; if (n and 0x80 != 0) { need(p < end, "string runs past the chunk"); n = ((n and 0x7F) shl 8) or (b.get(p++).toInt() and 0xFF) }; return n }
+            skipLen(); val byteLen = skipLen()
+            need(p + byteLen <= end, "string runs past the chunk")
+            return Triple(p, byteLen, true)
+        }
+        need(p + 2 <= end, "string runs past the chunk")
+        var n = b.getShort(p).toInt() and 0xFFFF; p += 2
+        if (n and 0x8000 != 0) { need(p + 2 <= end, "string runs past the chunk"); n = ((n and 0x7FFF) shl 16) or (b.getShort(p).toInt() and 0xFFFF); p += 2 }
+        need(p + n.toLong() * 2 <= end, "string runs past the chunk")
+        return Triple(p, n * 2, false)
+    }
+
     private fun utf8(b: ByteBuffer, start: Int, end: Int): String {
         var p = start
         fun len(): Int {

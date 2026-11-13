@@ -39,6 +39,17 @@ fun Thumb(key: Any, size: Dp, load: suspend () -> Bitmap?, modifier: Modifier = 
     }
 }
 
+/** Decodes a small preview of picture bytes (the new picture the user chose), or null. */
+suspend fun previewOf(bytes: ByteArray, px: Int): Bitmap? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+    try {
+        val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
+        var sample = 1
+        while (o.outWidth > 0 && minOf(o.outWidth, o.outHeight) / (sample * 2) >= px) sample *= 2
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+    } catch (e: Exception) { null }
+}
+
 /** A colour square for resource values like "#ff2b3a55" (null when the value is not a colour). */
 fun parseColor(value: String?): Color? {
     val v = value ?: return null
