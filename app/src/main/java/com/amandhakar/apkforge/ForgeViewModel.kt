@@ -87,17 +87,19 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                     Result.failure(IllegalStateException("Could not import the file: ${e.message ?: e.javaClass.simpleName}"))
                 }
             }
-            result.onSuccess { open(it.id) }
+            result.onSuccess { open(it.id, justImported = true) }
             result.onFailure { _state.value = _state.value.copy(busy = null, message = it.message) }
             refreshProjects()
         }
     }
 
-    fun open(id: String) {
+    fun open(id: String, justImported: Boolean = false) {
         _state.value = _state.value.copy(busy = "Reading APK…", message = null)
         viewModelScope.launch {
+            var duplicate = false
             val details = withContext(Dispatchers.IO) {
                 val project = workspace.get(id) ?: return@withContext null
+                if (justImported) duplicate = workspace.hasProbableDuplicate(project)
                 val apk = workspace.originalApk(id) ?: return@withContext null
                 val inspection = inspector.inspect(apk)
                 val meta = if (inspection is InspectionResult.Ok) metadataReader.read(apk) else null
@@ -112,7 +114,11 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = _state.value.copy(
                 busy = null,
                 details = details,
-                message = if (details == null) "That project could not be found." else null,
+                message = when {
+                    details == null -> "That project could not be found."
+                    justImported && duplicate -> "You already had a project from a file with this name and size, so this is probably the same APK again. You can delete one."
+                    else -> null
+                },
             )
         }
     }
@@ -136,7 +142,7 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
             // The log records the outcome only, never which app it was.
             log.event("installed_copy", "result" to result.javaClass.simpleName, "why" to ((result as? InstalledImport.NotReadable)?.why ?: "-"), "sdk" to Build.VERSION.SDK_INT)
             when (result) {
-                is InstalledImport.Imported -> { refreshProjects(); open(result.project.id) }
+                is InstalledImport.Imported -> { refreshProjects(); open(result.project.id, justImported = true) }
                 is InstalledImport.TooLarge -> _state.value = _state.value.copy(busy = null, message = "That APK is larger than ${MAX_IMPORT_BYTES / (1024 * 1024)} MB, which is the limit.")
                 is InstalledImport.NoPath -> _state.value = _state.value.copy(busy = null, accessProblem = AccessProblem(app.label, "Android did not give a usable file location for this app."))
                 is InstalledImport.NotReadable -> _state.value = _state.value.copy(

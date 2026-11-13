@@ -18,7 +18,7 @@ class DebugLogTest {
     @Test fun writesWhenEnabledAndClears() {
         val log = DebugLog(tmp.root.resolve("d.log"), { true }, { 42L })
         log.event("import_ok", "bytes" to 5)
-        assertEquals("42 import_ok bytes=5\n", log.read())
+        assertEquals("1970-01-01T00:00:00.042Z import_ok bytes=5\n", log.read())
         log.clear()
         assertEquals("", log.read())
     }

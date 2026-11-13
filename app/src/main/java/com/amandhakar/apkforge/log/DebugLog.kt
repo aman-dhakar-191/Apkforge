@@ -20,7 +20,7 @@ class DebugLog(
     fun event(name: String, vararg details: Pair<String, Any?>) {
         if (!isEnabled()) return
         val line = buildString {
-            append(clock()).append(' ').append(clean(name))
+            append(java.time.Instant.ofEpochMilli(clock())).append(' ').append(clean(name))
             details.forEach { (k, v) -> append(' ').append(clean(k)).append('=').append(clean(v.toString())) }
             append('\n')
         }

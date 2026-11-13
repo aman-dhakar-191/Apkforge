@@ -56,4 +56,14 @@ class WorkspaceTest {
         val p = ws().importApk("a\nb\u0000.apk", ByteArray(1).inputStream(), 10)
         assertEquals("ab.apk", p.displayName)
     }
+
+    @Test fun detectsProbableDuplicate() {
+        val w = ws()
+        val a = w.importApk("same.apk", ByteArray(10).inputStream(), 100)
+        assertFalse(w.hasProbableDuplicate(a))
+        val b = w.importApk("same.apk", ByteArray(10).inputStream(), 100)
+        val c = w.importApk("same.apk", ByteArray(11).inputStream(), 100)
+        assertTrue(w.hasProbableDuplicate(b))
+        assertFalse(w.hasProbableDuplicate(c))
+    }
 }
