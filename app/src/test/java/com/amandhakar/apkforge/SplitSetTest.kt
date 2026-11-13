@@ -117,9 +117,10 @@ class SplitSetTest {
     private fun assess(split: SplitInfo?, system: Boolean = false, declared: Int = 0, held: Int = 0) =
         Editability.assess(split, false, false, emptyList(), DexScan(emptySet(), 100, 0, 0), system, declared, held)
 
-    @Test fun systemAppIsABlockerEvenIfItLooksComplete() {
+    @Test fun systemAppIsAWarningNotABlocker() { // a copy installs beside it, so it is no longer impossible
         val r = assess(SplitInfo(SplitKind.COMPLETE, null), system = true)
-        assertEquals(Verdict.NOT_EDITABLE_HERE, r.verdict)
+        assertEquals(Verdict.MAY_BREAK, r.verdict)
+        assertEquals(Severity.WARNING, r.findings.first().severity)
         assertTrue(r.findings.first().title.contains("phone's own software"))
     }
 
