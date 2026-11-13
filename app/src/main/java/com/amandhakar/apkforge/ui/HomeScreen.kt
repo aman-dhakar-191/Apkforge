@@ -19,6 +19,7 @@ fun HomeScreen(
     onImport: () -> Unit,
     onOpen: (String) -> Unit,
     onDelete: (String) -> Unit,
+    onInstalled: () -> Unit,
     onSettings: () -> Unit,
 ) {
     var confirmDelete by remember { mutableStateOf<Project?>(null) }
@@ -32,7 +33,7 @@ fun HomeScreen(
             style = MaterialTheme.typography.bodyMedium,
         )
         Button(onImport, Modifier.fillMaxWidth()) { Text("Import APK") }
-        OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) { Text("Installed apps (coming in a later version)") }
+        OutlinedButton(onInstalled, Modifier.fillMaxWidth()) { Text("Installed apps") }
         Text("Recent projects", style = MaterialTheme.typography.titleMedium)
         if (projects.isEmpty()) {
             Text("No projects yet. Import an APK to start.", style = MaterialTheme.typography.bodyMedium)

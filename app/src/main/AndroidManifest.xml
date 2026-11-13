@@ -2,7 +2,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- No INTERNET permission on purpose: everything runs offline on the device.
-         No QUERY_ALL_PACKAGES either; Phase 2 will declare only the queries it needs. -->
+         No QUERY_ALL_PACKAGES either. The query below lets the app see apps that have a launcher icon,
+         and nothing more. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
 
     <application
         android:allowBackup="false"

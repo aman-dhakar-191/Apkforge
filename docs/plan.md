@@ -2,7 +2,7 @@
 
 1. **Import and inspect** (done, untested on a device): file picker import, private workspace,
    archive listing, package metadata, export original, optional local debug log.
-2. **Installed apps**: list visible apps; try to copy an APK only if Android allows it, else fall
+2. **Installed apps** (done, untested on a device): list visible apps; try to copy an APK only if Android allows it, else fall
    back to the file picker. No root, no hidden APIs, no `QUERY_ALL_PACKAGES`.
 3. **Decode and inspect**: readable manifest, resources, smali. Java-like view only if a library
    proves reliable on-device.

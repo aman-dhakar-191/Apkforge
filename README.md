@@ -6,7 +6,7 @@ Local only: no root, no network permission, nothing is uploaded.
 Only use it on apps you own or are authorized to analyze. It is not meant to bypass licensing,
 DRM, signature checks or anti-tamper protections.
 
-## Status: Phase 1 (import and inspect)
+## Status: Phase 2 (installed apps)
 
 Works now:
 
@@ -20,14 +20,20 @@ Works now:
 - Safe handling of bad input: size, entry-count and unpacked-size limits; damaged or non-ZIP files
   are rejected with a reason.
 - Export the untouched original APK.
+- **Installed apps**: lists the apps Android lets Apkforge see (those with a launcher icon; there is
+  no `QUERY_ALL_PACKAGES`), with search and a switch for system apps. Tapping one shows its package,
+  version and the APK path Android reports, and tries to copy that APK into the workspace. If
+  Android refuses (it depends on the Android version), Apkforge says so in plain words and offers
+  the file picker instead. It never uses root, hidden APIs or other apps' private data.
+  Split APKs: only the base APK is copied for now, and the app says so.
 
 Not built yet (tabs show "not available yet"): manifest decoding, resources, smali/Java views,
-editing, rebuilding, signing, installing, installed-apps discovery. See
+editing, rebuilding, signing, installing. See
 [docs/plan.md](docs/plan.md).
 
-Status of checking: 23 unit tests pass (archive parsing, path safety, workspace, debug log) and a
-release APK builds. **The screens and `PackageManager` metadata reading have not been run on a
-device yet.**
+Status of checking: 30 unit tests pass (archive parsing, path safety, workspace, debug log,
+installed-app filtering and copying) and a release APK builds. **The screens, `PackageManager`
+reading and whether Android lets the app read other apps' APKs have not been run on a device yet.**
 
 ## Debug log (optional)
 
