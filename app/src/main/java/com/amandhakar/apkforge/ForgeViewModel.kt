@@ -8,11 +8,14 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.amandhakar.apkforge.core.InspectionResult
+import com.amandhakar.apkforge.core.EditabilityReport
+import com.amandhakar.apkforge.core.Editability
 import com.amandhakar.apkforge.core.ManifestResult
 import com.amandhakar.apkforge.core.ResourceResult
 import com.amandhakar.apkforge.core.SplitInfo
 import com.amandhakar.apkforge.core.Splits
 import com.amandhakar.apkforge.inspect.ArscReader
+import com.amandhakar.apkforge.inspect.DexClassScanner
 import com.amandhakar.apkforge.inspect.AxmlDecoder
 import com.amandhakar.apkforge.core.InstalledApp
 import com.amandhakar.apkforge.inspect.InstalledAppsReader
@@ -40,6 +43,8 @@ data class ProjectDetails(
     val resources: ResourceResult? = null,
     /** From the manifest; null when the manifest could not be read. */
     val split: SplitInfo? = null,
+    /** Filled in a moment after the project opens (it reads all the code); null until then. */
+    val editability: EditabilityReport? = null,
 )
 
 data class UiState(
@@ -64,6 +69,7 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
     private val inspector = ZipApkInspector()
     private val metadataReader = ApkMetadataReader(app)
     private val arscReader = ArscReader()
+    private val dexScanner = DexClassScanner()
     private val installedReader = InstalledAppsReader(app)
     private val installedImporter = InstalledApkImporter(workspace, MAX_IMPORT_BYTES)
 
@@ -130,6 +136,7 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 ProjectDetails(project, inspection, meta, manifest, resources, split)
             }
+            if (details != null) computeEditability(details)
             _state.value = _state.value.copy(
                 busy = null,
                 details = details,
@@ -177,6 +184,31 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun dismissAccessProblem() { _state.value = _state.value.copy(accessProblem = null) }
+
+    private fun computeEditability(d: ProjectDetails) {
+        viewModelScope.launch {
+            val report = withContext(Dispatchers.IO) {
+                val apk = workspace.originalApk(d.project.id) ?: return@withContext null
+                val ok = d.inspection as? InspectionResult.Ok ?: return@withContext null
+                val scan = try { dexScanner.scan(apk) } catch (e: Exception) { null }
+                val app = (d.manifest as? ManifestResult.Ok)?.applicationAttributes.orEmpty()
+                val r = Editability.assess(
+                    split = d.split,
+                    debuggable = app["debuggable"] == "true",
+                    hasNativeLibs = ok.summary.nativeAbis.isNotEmpty(),
+                    packerLibs = Editability.packerLibraries(ok.entries.map { it.name }),
+                    scan = scan,
+                )
+                // Only generic categories are logged, never which app.
+                log.event("editability", "verdict" to r.verdict, "markers" to (scan?.markers?.sorted()?.joinToString(",")?.ifEmpty { "none" } ?: "unscanned"), "skipped" to (scan?.skippedFiles ?: -1))
+                r
+            }
+            val cur = _state.value.details
+            if (report != null && cur != null && cur.project.id == d.project.id) {
+                _state.value = _state.value.copy(details = cur.copy(editability = report))
+            }
+        }
+    }
 
     fun close() { _state.value = _state.value.copy(details = null) }
 

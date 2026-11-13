@@ -25,7 +25,7 @@ class AxmlDecoder(
 ) : ManifestDecoder {
 
     /** Result of decoding: the readable XML and the root element's attributes (local names). */
-    class Decoded(val xml: String, val rootAttributes: Map<String, String>)
+    class Decoded(val xml: String, val rootAttributes: Map<String, String>, val applicationAttributes: Map<String, String> = emptyMap())
 
 
     override fun decode(apk: File): ManifestResult = try {
@@ -35,7 +35,7 @@ class AxmlDecoder(
             zip.getInputStream(e).use { it.readNBytes(maxBytes + 1) }
         }
         if (bytes.size > maxBytes) ManifestResult.Failed("The manifest is larger than $maxBytes bytes")
-        else decodeFull(bytes).let { ManifestResult.Ok(it.xml, it.rootAttributes) }
+        else decodeFull(bytes).let { ManifestResult.Ok(it.xml, it.rootAttributes, it.applicationAttributes) }
     } catch (e: AxmlException) {
         ManifestResult.Failed("The manifest could not be decoded: ${e.message}")
     } catch (e: IOException) {
@@ -57,6 +57,7 @@ class AxmlDecoder(
         var depth = 0
         var elements = 0
         val root = LinkedHashMap<String, String>()
+        val application = LinkedHashMap<String, String>()
 
         var pos = 8
         while (pos + 8 <= total) {
@@ -107,6 +108,7 @@ class AxmlDecoder(
                         val data = b.getInt(a + 16)
                         val text = value(raw, dataType, data, strings)
                         if (depth == 1) root[aname] = text
+                        if (depth == 2 && name == "application") application[aname] = text
                         out.append("\n").append("  ".repeat(depth)).append(qualified(ans, aname, strings, prefixes))
                             .append("=\"").append(esc(text)).append('"')
                     }
@@ -129,7 +131,7 @@ class AxmlDecoder(
             pos = end
         }
         if (depth != 0) throw AxmlException("unclosed element")
-        return Decoded(out.toString(), root)
+        return Decoded(out.toString(), root, application)
     }
 
     private fun qualified(ns: Int, name: String, strings: List<String>, prefixes: Map<String, String>): String {

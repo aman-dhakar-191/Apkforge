@@ -6,7 +6,7 @@ Local only: no root, no network permission, nothing is uploaded.
 Only use it on apps you own or are authorized to analyze. It is not meant to bypass licensing,
 DRM, signature checks or anti-tamper protections.
 
-## Status: Phase 3 in progress (manifest and resources)
+## Status: Phase 3 in progress (manifest, resources, editability check)
 
 Works now:
 
@@ -35,13 +35,22 @@ Works now:
 - **Split detection** reads the manifest (`requiredSplitTypes`, `split`), so the base APK of a split
   app is reported as needing its other parts instead of as "complete".
 
+- **Editability check** (Overview): "Can this app be modified?" A checklist from reading the files:
+  split app needing other parts (blocker); Google Play Integrity, SafetyNet, Firebase App Check,
+  Play licensing or root-detection code present, or native libraries named like known code packers
+  (warnings); native code, debuggable flag, shortened class names, and the new-signature caveat
+  (notes). It reads only each DEX file's class-name table (about 0.2 s for 19 MB). It never says
+  "nothing found" about code it could not read, and it lists what it cannot detect: the app's own
+  signature checks, DRM, and code decrypted at run time. It reports what is there; it does not help
+  get around any protection.
+
 Not built yet (tabs show "not available yet"): smali/Java views, editing,
 rebuilding, signing, installing. How rebuilding could work without `aapt2` is in
 [docs/toolchain.md](docs/toolchain.md). See
 [docs/plan.md](docs/plan.md).
 
-Status of checking: 53 unit tests pass (archive parsing, path safety, workspace, debug log,
-installed-app filtering and copying, manifest and resource decoding checked against `aapt2` output; all 275 resource names of Apkforge's own APK match) and a release APK builds. **The screens, `PackageManager`
+Status of checking: 69 unit tests pass (archive parsing, path safety, workspace, debug log,
+installed-app filtering and copying, manifest and resource decoding checked against `aapt2` output; all 275 resource names of Apkforge's own APK match; code scanner tested on DEX files built by d8) and a release APK builds. **The screens, `PackageManager`
 reading and whether Android lets the app read other apps' APKs have not been run on a device yet.**
 
 ## Debug log (optional)

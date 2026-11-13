@@ -101,6 +101,7 @@ private fun Overview(d: ProjectDetails, onExport: () -> Unit, onDelete: () -> Un
                 Text("Warning: ${s.unsafeNameCount} entries have unsafe or duplicate names. They will never be unpacked.", color = MaterialTheme.colorScheme.error)
             }
         }
+        EditabilityCard(d.editability)
         Spacer(Modifier.height(8.dp))
         Button(onExport, Modifier.fillMaxWidth()) { Text("Export original APK (unchanged)") }
         OutlinedButton({ confirm = true }, Modifier.fillMaxWidth()) { Text("Delete project") }
@@ -113,6 +114,35 @@ private fun Overview(d: ProjectDetails, onExport: () -> Unit, onDelete: () -> Un
             confirmButton = { TextButton({ confirm = false; onDelete() }) { Text("Delete") } },
             dismissButton = { TextButton({ confirm = false }) { Text("Cancel") } },
         )
+    }
+}
+
+@Composable
+private fun EditabilityCard(r: EditabilityReport?) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Can this app be modified?", style = MaterialTheme.typography.titleSmall)
+            if (r == null) {
+                Text("Checking the code…", style = MaterialTheme.typography.bodyMedium)
+            } else {
+                Text(Editability.headline(r.verdict), style = MaterialTheme.typography.titleMedium,
+                    color = when (r.verdict) {
+                        Verdict.NOT_EDITABLE_HERE -> MaterialTheme.colorScheme.error
+                        Verdict.NOTHING_FOUND -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.tertiary
+                    })
+                r.findings.forEach { f ->
+                    Column {
+                        Text(
+                            "${when (f.severity) { Severity.BLOCKER -> "Blocker"; Severity.WARNING -> "Warning"; Severity.NOTE -> "Note" }}: ${f.title}",
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        Text(f.detail, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Text(Editability.CANNOT_TELL, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
     }
 }
 
