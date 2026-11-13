@@ -6,7 +6,7 @@ Local only: no root, no network permission, nothing is uploaded.
 Only use it on apps you own or are authorized to analyze. It is not meant to bypass licensing,
 DRM, signature checks or anti-tamper protections.
 
-## Status: Phase 3 started (manifest viewer)
+## Status: Phase 3 in progress (manifest and resources)
 
 Works now:
 
@@ -28,16 +28,20 @@ Works now:
   Split APKs: only the base APK is copied for now, and the app says so.
 
 - **Manifest tab**: the binary AndroidManifest.xml shown as readable XML (own decoder, bounds-checked,
-  no dependencies). Resource references stay as numbers (`@0x7f090001`) until a resource-table
-  reader exists.
+  no dependencies). References to resources are shown by name (`@string/app_name`).
+- **Resources tab**: names and default values from `resources.arsc` (own reader), with search and
+  a filter by type. Only simple values are shown (strings, numbers, colours, file paths); styles,
+  arrays and plurals show their item count. Other languages and screen densities are counted, not listed.
+- **Split detection** reads the manifest (`requiredSplitTypes`, `split`), so the base APK of a split
+  app is reported as needing its other parts instead of as "complete".
 
-Not built yet (tabs show "not available yet"): resource names, smali/Java views, editing,
+Not built yet (tabs show "not available yet"): smali/Java views, editing,
 rebuilding, signing, installing. How rebuilding could work without `aapt2` is in
 [docs/toolchain.md](docs/toolchain.md). See
 [docs/plan.md](docs/plan.md).
 
-Status of checking: 39 unit tests pass (archive parsing, path safety, workspace, debug log,
-installed-app filtering and copying, manifest decoding checked against `aapt2` output) and a release APK builds. **The screens, `PackageManager`
+Status of checking: 53 unit tests pass (archive parsing, path safety, workspace, debug log,
+installed-app filtering and copying, manifest and resource decoding checked against `aapt2` output; all 275 resource names of Apkforge's own APK match) and a release APK builds. **The screens, `PackageManager`
 reading and whether Android lets the app read other apps' APKs have not been run on a device yet.**
 
 ## Debug log (optional)

@@ -9,6 +9,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.amandhakar.apkforge.core.InspectionResult
 import com.amandhakar.apkforge.core.ManifestResult
+import com.amandhakar.apkforge.core.ResourceResult
+import com.amandhakar.apkforge.core.SplitInfo
+import com.amandhakar.apkforge.core.Splits
+import com.amandhakar.apkforge.inspect.ArscReader
 import com.amandhakar.apkforge.inspect.AxmlDecoder
 import com.amandhakar.apkforge.core.InstalledApp
 import com.amandhakar.apkforge.inspect.InstalledAppsReader
@@ -33,6 +37,9 @@ data class ProjectDetails(
     val inspection: InspectionResult,
     val metadata: ApkMetadata?,
     val manifest: ManifestResult? = null,
+    val resources: ResourceResult? = null,
+    /** From the manifest; null when the manifest could not be read. */
+    val split: SplitInfo? = null,
 )
 
 data class UiState(
@@ -56,7 +63,7 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
     private val log = DebugLog(File(app.filesDir, "debug.log"), isEnabled = { prefs.getBoolean(KEY_DEBUG, false) })
     private val inspector = ZipApkInspector()
     private val metadataReader = ApkMetadataReader(app)
-    private val manifestDecoder = AxmlDecoder()
+    private val arscReader = ArscReader()
     private val installedReader = InstalledAppsReader(app)
     private val installedImporter = InstalledApkImporter(workspace, MAX_IMPORT_BYTES)
 
@@ -107,15 +114,21 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                 val apk = workspace.originalApk(id) ?: return@withContext null
                 val inspection = inspector.inspect(apk)
                 val meta = if (inspection is InspectionResult.Ok) metadataReader.read(apk) else null
-                val manifest = if (inspection is InspectionResult.Ok && inspection.summary.hasManifest) manifestDecoder.decode(apk) else null
+                val ok = inspection as? InspectionResult.Ok
+                val resources = if (ok != null && ok.summary.hasResourceTable) arscReader.read(apk) else null
+                val resolver: ((Int) -> String?)? = (resources as? ResourceResult.Ok)?.table?.let { t -> { id: Int -> t.nameOf(id) } }
+                val manifest = if (ok != null && ok.summary.hasManifest) AxmlDecoder(resolver = resolver).decode(apk) else null
+                val split = (manifest as? ManifestResult.Ok)?.let { Splits.classify(it.rootAttributes) }
                 log.event(
                     "inspect",
                     "result" to (if (inspection is InspectionResult.Ok) "ok" else (inspection as InspectionResult.Rejected).reason),
                     "entries" to ((inspection as? InspectionResult.Ok)?.summary?.entryCount ?: 0),
                     "metadata" to (meta != null),
                     "manifest" to (if (manifest is ManifestResult.Ok) "ok" else if (manifest == null) "none" else "failed"),
+                    "resources" to (if (resources is ResourceResult.Ok) resources.table.entries.size else if (resources == null) "none" else "failed"),
+                    "split" to (split?.kind ?: "unknown"),
                 )
-                ProjectDetails(project, inspection, meta, manifest)
+                ProjectDetails(project, inspection, meta, manifest, resources, split)
             }
             _state.value = _state.value.copy(
                 busy = null,

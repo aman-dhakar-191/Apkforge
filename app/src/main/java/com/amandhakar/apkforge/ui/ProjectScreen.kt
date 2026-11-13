@@ -14,7 +14,7 @@ import androidx.compose.ui.unit.sp
 import com.amandhakar.apkforge.ProjectDetails
 import com.amandhakar.apkforge.core.*
 
-private val TABS = listOf("Overview", "Files", "Manifest", "Code", "Build")
+private val TABS = listOf("Overview", "Files", "Manifest", "Resources", "Code", "Build")
 
 @Composable
 fun ProjectScreen(details: ProjectDetails, onBack: () -> Unit, onExport: () -> Unit, onDelete: () -> Unit) {
@@ -31,7 +31,8 @@ fun ProjectScreen(details: ProjectDetails, onBack: () -> Unit, onExport: () -> U
             0 -> Overview(details, onExport, onDelete)
             1 -> Files(details.inspection)
             2 -> ManifestTab(details.manifest)
-            3 -> Later("DEX and code view", "Smali and Java-like views are planned for Phase 3. The Files tab lists the DEX files in this APK.")
+            3 -> ResourcesTab(details.resources)
+            4 -> Later("DEX and code view", "Smali and Java-like views are planned for Phase 3. The Files tab lists the DEX files in this APK.")
             else -> Later("Build, sign and install", "Rebuilding, signing and installing are later phases. This version only inspects and exports the untouched original.")
         }
     }
@@ -46,7 +47,7 @@ private fun ManifestTab(m: ManifestResult?) {
             val lines = remember(m) { m.xml.lines() }
             Column(Modifier.fillMaxSize()) {
                 Text(
-                    "Decoded from the binary manifest. Values like @0x7f090001 are references to resources.arsc entries; their names are not resolved yet.",
+                    "Decoded from the binary manifest. References are shown by resource name (for example @string/app_name); a number like @0x7f090001 means the name was not found in resources.arsc.",
                     Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -95,7 +96,7 @@ private fun Overview(d: ProjectDetails, onExport: () -> Unit, onDelete: () -> Un
             Row2("Entries", "${s.entryCount} (${formatBytes(s.totalUncompressedBytes)} unpacked)")
             Row2("DEX files", s.dexFiles.joinToString().ifEmpty { "none" })
             Row2("Native libraries", s.nativeAbis.joinToString().ifEmpty { "none" })
-            Row2("Single or split", if (s.looksLikeSplitApk) "Probably one part of a split APK (no code or resource table). The base APK and other parts are needed too." else "Looks like a complete APK (guessed from its file list)")
+            Row2("Single or split", splitText(d.split, s.looksLikeSplitApk))
             if (s.unsafeNameCount > 0) {
                 Text("Warning: ${s.unsafeNameCount} entries have unsafe or duplicate names. They will never be unpacked.", color = MaterialTheme.colorScheme.error)
             }
@@ -112,6 +113,51 @@ private fun Overview(d: ProjectDetails, onExport: () -> Unit, onDelete: () -> Un
             confirmButton = { TextButton({ confirm = false; onDelete() }) { Text("Delete") } },
             dismissButton = { TextButton({ confirm = false }) { Text("Cancel") } },
         )
+    }
+}
+
+private fun splitText(split: SplitInfo?, guessSplit: Boolean): String = when {
+    split == null -> if (guessSplit) "Probably one part of a split APK (no code or resource table). The base APK and other parts are needed too." else "Looks like a complete APK (guessed from its file list, because the manifest could not be read)"
+    split.kind == SplitKind.BASE_NEEDS_SPLITS -> "Base APK of a split app" + (split.detail?.let { " (needs: $it)" } ?: "") + ". It can't run alone: its other parts (native libraries, screen-density resources, languages) are separate files. Apkforge copies only this part for now."
+    split.kind == SplitKind.SPLIT_PART -> "One part of a split app" + (split.detail?.let { " (\"$it\")" } ?: "") + ", not a whole app. It needs the base APK."
+    else -> "Complete APK (from its manifest: no split parts required)"
+}
+
+@Composable
+private fun ResourcesTab(r: ResourceResult?) {
+    when (r) {
+        null -> Later("No resource table", "This APK has no resources.arsc.")
+        is ResourceResult.Failed -> Later("Resources not readable", r.reason)
+        is ResourceResult.Ok -> {
+            val table = r.table
+            var query by remember { mutableStateOf("") }
+            var type by remember { mutableStateOf<String?>(null) }
+            val rows = remember(table, query, type) {
+                table.entries.values.asSequence()
+                    .filter { type == null || it.type == type }
+                    .filter { query.isBlank() || it.name.contains(query, true) || (it.value?.contains(query, true) == true) }
+                    .sortedWith(compareBy({ it.type }, { it.name })).take(5000).toList()
+            }
+            Column(Modifier.fillMaxSize()) {
+                OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), label = { Text("Search name or value (${table.entries.size} resources)") }, singleLine = true)
+                androidx.compose.foundation.lazy.LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item { FilterChip(type == null, { type = null }, label = { Text("All") }) }
+                    items(table.types) { t -> FilterChip(type == t, { type = t }, label = { Text(t) }) }
+                }
+                LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp)) {
+                    items(rows, key = { it.id }) { e ->
+                        Column(Modifier.padding(vertical = 4.dp)) {
+                            Text("${e.type}/${e.name}", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                (table.displayValue(e) ?: "(no simple value)") + if (e.configCount > 1) "  ·  ${e.configCount} configurations" else "",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                    if (rows.size == 5000) item { Text("Showing the first 5000. Narrow the search to see more.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 8.dp)) }
+                }
+            }
+        }
     }
 }
 

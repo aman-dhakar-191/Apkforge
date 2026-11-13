@@ -1,0 +1,41 @@
+Binary APK
+Package name=com.example.fixture id=7f
+  type array id=01 entryCount=1
+    resource 0x7f010000 array/colors_list
+      () (array) size=2
+        ["red", "blue"]
+  type bool id=02 entryCount=1
+    resource 0x7f020000 bool/is_debug
+      () true
+  type color id=03 entryCount=1
+    resource 0x7f030000 color/brand
+      () #ff2b3a55
+  type dimen id=04 entryCount=1
+    resource 0x7f040000 dimen/pad
+      () 16.000000dp
+  type integer id=05 entryCount=1
+    resource 0x7f050000 integer/max_count
+      () 42
+  type layout id=06 entryCount=1
+    resource 0x7f060000 layout/main
+      () (file) res/layout/main.xml type=XML
+  type plurals id=07 entryCount=1
+    resource 0x7f070000 plurals/items
+      () (plurals) size=2
+        one="%d item"
+        other="%d items"
+  type string id=08 entryCount=3
+    resource 0x7f080000 string/alias_ref
+      () @string/app_name
+    resource 0x7f080001 string/app_name
+      () "Fixture App"
+      (hi) "फ़िक्स्चर"
+    resource 0x7f080002 string/greeting
+      () "Hello & welcome"
+  type style id=09 entryCount=1
+    resource 0x7f090000 style/AppTheme
+      () (style) size=1 parent=0x01030237
+        0x01010054=@color/brand
+  type xml id=0a entryCount=1
+    resource 0x7f0a0000 xml/prefs
+      () (file) res/xml/prefs.xml type=XML
