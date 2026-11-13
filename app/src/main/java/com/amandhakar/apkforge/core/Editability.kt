@@ -71,8 +71,8 @@ object Editability {
     ): EditabilityReport {
         val f = ArrayList<Finding>()
 
-        if (systemApp) f += Finding(Severity.BLOCKER, "Part of the phone's own software",
-            "This is a system app. A modified copy would have a different signature, so it cannot replace the built-in one, and Android treats system apps differently from ordinary ones.")
+        if (systemApp) f += Finding(Severity.WARNING, "Part of the phone's own software",
+            "This is a system app. A copy installs beside it as an ordinary app, so it can't use privileges only the phone's maker can grant. If the app needs those, the copy may not work.")
 
         when (split?.kind) {
             SplitKind.BASE_NEEDS_SPLITS -> f += Finding(Severity.BLOCKER, "Split app: whole-set editing is not available",
@@ -101,8 +101,9 @@ object Editability {
             "Most class names are one or two letters (typical of R8/ProGuard). Code can still be read, but it is harder to follow.")
         if (hasNativeLibs) f += Finding(Severity.NOTE, "Has native code", "Native libraries (.so files) cannot be turned back into source, and Apkforge does not edit them.")
         if (debuggable) f += Finding(Severity.NOTE, "Marked debuggable", "The app declares itself a debug build.")
-        f += Finding(Severity.NOTE, "A copy gets a different signature",
-            "Unless you have the original signing key, a rebuilt app cannot update the installed one. You would have to uninstall the original first, which deletes its data. Apkforge never does that for you.")
+        f += Finding(Severity.NOTE, "A copy is a different app",
+            "Apkforge installs the modified copy beside the original, under a new package name and signed with its own key. The original and its data are not touched. " +
+                "Anything tied to the original (Google sign-in, push notifications, licence checks) usually stops working in the copy, and apps that check their own package name or signature may refuse to run.")
 
         val verdict = when {
             f.any { it.severity == Severity.BLOCKER } -> Verdict.NOT_EDITABLE_HERE

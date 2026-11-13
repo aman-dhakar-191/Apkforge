@@ -9,6 +9,9 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.amandhakar.apkforge.build.ApkChecks
+import com.amandhakar.apkforge.build.CloneResult
+import com.amandhakar.apkforge.build.CloneSpec
+import com.amandhakar.apkforge.build.PackageClone
 import com.amandhakar.apkforge.build.ApkEdit
 import com.amandhakar.apkforge.build.ApkRebuilder
 import com.amandhakar.apkforge.build.ApkSigning
@@ -88,9 +91,14 @@ class StagedImage(val resource: String, val replacements: Map<String, ByteArray>
 class BuildOutcome(
     val apk: File, val report: VerifyReport, val sizeBytes: Long, val fingerprint: String,
     val changes: List<String>, val createdKey: Boolean,
+    val newPackage: String? = null, val notes: List<String> = emptyList(),
 )
 
 data class BuildUi(
+    /** Install the copy beside the original under a new package name (the default). Off = keep the name, which can only replace the original. */
+    val copyAsNew: Boolean = true,
+    val suffix: String = "forge",
+    val label: String = "",
     val staged: List<StagedImage> = emptyList(),
     val running: String? = null,
     val outcome: BuildOutcome? = null,
@@ -184,6 +192,7 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = _state.value.copy(
                 busy = null,
                 details = details,
+                build = BuildUi(label = (details?.metadata?.label ?: details?.project?.displayName ?: "App").take(50) + " (copy)"),
                 message = when {
                     details == null -> "That project could not be found."
                     notice != null -> notice
@@ -366,8 +375,8 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
     private fun setBuild(f: (BuildUi) -> BuildUi) { _state.value = _state.value.copy(build = f(_state.value.build)) }
 
     /** The reason this app cannot be rebuilt in this version, or null. */
-    fun buildBlockedReason(d: ProjectDetails): String? = when {
-        d.project.system -> "This is a system app. A modified copy cannot replace it."
+    fun buildBlockedReason(d: ProjectDetails, copyAsNew: Boolean = true): String? = when {
+        d.project.system && !copyAsNew -> "This is a system app: a modified copy can only be installed beside it, not over it. Turn on \"Install as a separate copy\"."
         d.split?.kind == SplitKind.BASE_NEEDS_SPLITS || d.split?.kind == SplitKind.SPLIT_PART -> "This is a split app. Rebuilding and re-signing a whole set is not available in this version."
         d.inspection !is InspectionResult.Ok -> "This file could not be read as an APK."
         (d.resources as? ResourceResult.Ok) == null -> "This APK has no readable resource table, so there are no images to pick from."
@@ -415,13 +424,23 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun setCopyAsNew(on: Boolean) { setBuild { it.copy(copyAsNew = on, problem = null, outcome = null) } }
+    fun setSuffix(s: String) { setBuild { it.copy(suffix = s.take(24), problem = null, outcome = null) } }
+    fun setLabel(s: String) { setBuild { it.copy(label = s.take(60), problem = null, outcome = null) } }
+
     fun unstage(resource: String) { setBuild { b -> b.copy(staged = b.staged.filter { it.resource != resource }, outcome = null) } }
 
     fun buildCopy() {
         val d = _state.value.details ?: return
-        val staged = _state.value.build.staged
-        if (staged.isEmpty()) return
-        buildBlockedReason(d)?.let { r -> setBuild { it.copy(problem = r) }; return }
+        val ui = _state.value.build
+        val staged = ui.staged
+        val oldPackage = d.metadata?.packageName
+        if (staged.isEmpty() && !ui.copyAsNew) { setBuild { it.copy(problem = "There is nothing to change yet: pick an image, or install as a separate copy.") }; return }
+        buildBlockedReason(d, ui.copyAsNew)?.let { r -> setBuild { it.copy(problem = r) }; return }
+        if (ui.copyAsNew) {
+            val p = PackageClone.suffixProblem(ui.suffix) ?: PackageClone.labelProblem(ui.label)
+            if (p != null || oldPackage == null) { setBuild { it.copy(problem = p ?: "The app's package name could not be read.") }; return }
+        }
         setBuild { it.copy(running = "Building, signing and checking…", problem = null, outcome = null) }
         viewModelScope.launch {
             val result: Pair<BuildOutcome?, String?> = withContext(Dispatchers.IO) {
@@ -432,13 +451,23 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                     val entries = (d.inspection as InspectionResult.Ok).entries
                     val edits = staged.flatMap { s -> s.replacements.map { (p, b) -> ApkEdit.ReplaceFile(p, b) } }
                     for (e in edits) EditPlan.problem(e, entries)?.let { return@withContext null to it }
-                    rebuilder.rebuild(apk, unsigned, edits.associate { it.entryName to (it as ApkEdit.ReplaceFile).bytes })
+                    val replacements = LinkedHashMap<String, ByteArray>()
+                    edits.forEach { replacements[it.entryName] = (it as ApkEdit.ReplaceFile).bytes }
+                    var clone: CloneResult.Ok? = null
+                    if (ui.copyAsNew) {
+                        when (val c = PackageClone.prepare(apk, CloneSpec(oldPackage!!, ui.suffix, ui.label))) {
+                            is CloneResult.Unsupported -> return@withContext null to c.reason
+                            is CloneResult.Ok -> { clone = c; replacements.putAll(c.replacements) }
+                        }
+                    }
+                    rebuilder.rebuild(apk, unsigned, replacements)
                     val hadKey = keys.exists()
                     val identity = keys.loadOrCreate()
                     signing.sign(unsigned, signed, identity, d.metadata?.minSdk ?: 23)
                     val report = checks.verify(signed, d.metadata?.minSdk)
-                    log.event("build", "files" to edits.size, "verified" to report.verified, "v2" to report.v2, "v3" to report.v3, "bytes" to signed.length())
-                    BuildOutcome(signed, report, signed.length(), identity.fingerprint, EditPlan.summary(edits, entries), createdKey = !hadKey) to null
+                    log.event("build", "files" to edits.size, "verified" to report.verified, "v2" to report.v2, "v3" to report.v3, "bytes" to signed.length(), "copy" to ui.copyAsNew)
+                    val changes = EditPlan.summary(edits, entries) + (if (clone != null) listOf("Install as a separate app: ${oldPackage}.${ui.suffix}, named \"${ui.label}\"") else emptyList())
+                    BuildOutcome(signed, report, signed.length(), identity.fingerprint, changes, createdKey = !hadKey, newPackage = clone?.let { "$oldPackage.${ui.suffix}" }, notes = clone?.notes.orEmpty()) to null
                 } catch (e: Exception) {
                     signed.delete()
                     log.event("build_failed", "reason" to e.javaClass.simpleName)

@@ -22,6 +22,9 @@ fun BuildTab(
     d: ProjectDetails,
     b: BuildUi,
     blocked: String?,
+    onCopyAsNew: (Boolean) -> Unit,
+    onSuffix: (String) -> Unit,
+    onLabel: (String) -> Unit,
     onPick: (ResourceEntry) -> Unit,
     onRemove: (String) -> Unit,
     onBuild: () -> Unit,
@@ -39,8 +42,7 @@ fun BuildTab(
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Text(
-                "Changes go into a separate copy of the app. The original file in Apkforge is never changed. " +
-                    "The copy is signed with Apkforge's own key, not the original developer's, so Android treats it as a different app from the one you have installed.",
+                "Changes go into a separate copy of the app. The original file in Apkforge is never changed, and the copy is signed with Apkforge's own key.",
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -49,6 +51,33 @@ fun BuildTab(
             return@LazyColumn
         }
 
+        item {
+            val oldPackage = d.metadata?.packageName ?: "the original"
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Install as a separate copy", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                if (b.copyAsNew) "The copy gets a new package name, so it installs next to the original. The original and its data are not touched; the copy keeps its own data."
+                                else "The copy keeps the original's package name. Android will only install it over the original if it has the same signature, which it won't: you would have to uninstall the original first, which deletes its data.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        Switch(b.copyAsNew, onCopyAsNew, enabled = !d.project.system && b.running == null)
+                    }
+                    if (b.copyAsNew) {
+                        OutlinedTextField(b.label, onLabel, Modifier.fillMaxWidth(), label = { Text("Name under the icon") }, singleLine = true)
+                        OutlinedTextField(b.suffix, onSuffix, Modifier.fillMaxWidth(), label = { Text("Package name ending") }, singleLine = true, supportingText = { Text("New package: $oldPackage.${b.suffix.ifEmpty { "…" }}") })
+                        Text(
+                            "Things tied to the original (Google sign-in, push notifications, licence checks) usually stop working in the copy, and apps that check their own package name may refuse to run.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        if (d.project.system) Text("This is a system app: the copy becomes an ordinary app and may not work if it needs privileges only the phone's maker can give.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+        }
         item { Text("Replace an image", style = MaterialTheme.typography.titleMedium) }
         item {
             Text(
@@ -74,9 +103,10 @@ fun BuildTab(
             }
         }
 
-        if (b.staged.isNotEmpty()) {
+        if (b.staged.isNotEmpty() || b.copyAsNew) {
             item { HorizontalDivider() }
             item { Text("Planned changes", style = MaterialTheme.typography.titleMedium) }
+            if (b.copyAsNew) item { Text("Install as a separate app: ${d.metadata?.packageName ?: "?"}.${b.suffix}, named \"${b.label}\"", style = MaterialTheme.typography.bodyMedium) }
             items(b.staged, key = { it.resource }) { s ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Replace ${s.resource} (${s.replacements.size} file${if (s.replacements.size == 1) "" else "s"})", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
@@ -108,11 +138,16 @@ fun BuildTab(
                         Text("Signed with Apkforge's key (SHA-256):\n${o.fingerprint}", style = MaterialTheme.typography.bodySmall)
                         if (o.createdKey) Text("Apkforge made this key just now. It stays on this phone, in the app's private storage.", style = MaterialTheme.typography.bodySmall)
                         o.report.errors.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
-                        Text(
-                            "If the original app is installed, Android will refuse to install this copy over it, because the signatures differ. " +
-                                "You would have to uninstall the original first, which deletes its data. Apkforge never uninstalls anything for you.",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
+                        if (o.newPackage != null) {
+                            Text("Installs next to the original as ${o.newPackage}. The original and its data are not touched.", style = MaterialTheme.typography.bodySmall)
+                            o.notes.forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
+                        } else {
+                            Text(
+                                "If the original app is installed, Android will refuse to install this copy over it, because the signatures differ. " +
+                                    "You would have to uninstall the original first, which deletes its data. Apkforge never uninstalls anything for you.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onExport) { Text("Export APK") }
                             OutlinedButton(onInstall, enabled = o.report.verified) { Text("Install…") }

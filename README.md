@@ -6,7 +6,7 @@ Local only: no root, no network permission, nothing is uploaded.
 Only use it on apps you own or are authorized to analyze. It is not meant to bypass licensing,
 DRM, signature checks or anti-tamper protections.
 
-## Status: Phase 4/5 started (replace images, rebuild, sign, install)
+## Status: Phase 4/5 (replace images; install as a separate copy)
 
 Works now:
 
@@ -47,6 +47,15 @@ Works now:
   signature checks, DRM, and code decrypted at run time. It reports what is there; it does not help
   get around any protection.
 
+- **Install as a separate copy (default).** The copy gets a new package name (`<original>.forge`, you
+  can change the ending) and a new name under the icon, so it installs *next to* the original: no
+  uninstalling, no lost data, and it works for system apps too (as an ordinary app). Renamed:
+  `package`, content-provider authorities and custom permissions (they must be unique on the phone),
+  the launcher name, and the package name inside `resources.arsc`. Class names are not renamed (they
+  point at code inside the app). Not possible for apps that use `sharedUserId`, or for split apps (not
+  built yet). Things tied to the original (Google sign-in, push notifications, licence checks) usually
+  stop working in the copy. Checked on Apkforge's own 7 MB APK with `aapt2`, `apksigner` and
+  `zipalign`; not yet run on a phone.
 - **Build tab: replace images.** Pick an image resource (every screen-density file it uses is found
   from `resources.arsc`), pick a picture, and Apkforge converts it to the same format and pixel size
   (centre-cropped). A summary of the planned changes is shown, then **Build, sign and check**
@@ -62,7 +71,7 @@ Not built yet: editing layouts, text and colours (planned, in that order), smali
 [docs/toolchain.md](docs/toolchain.md). See
 [docs/plan.md](docs/plan.md).
 
-Status of checking: 121 unit tests pass (archive parsing, path safety, workspace, debug log,
+Status of checking: 141 unit tests pass (archive parsing, path safety, workspace, debug log,
 installed-app filtering and copying, split-set copying, manifest and resource decoding checked against `aapt2` output; all 275 resource names of Apkforge's own APK match; code scanner tested on DEX files built by d8; rebuilt and signed APKs accepted by Android's apksigner, zipalign -P 16 and aapt2) and a release APK builds. **The screens, `PackageManager`
 reading and whether Android lets the app read other apps' APKs have not been run on a device yet.**
 

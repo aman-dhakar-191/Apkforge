@@ -25,6 +25,9 @@ fun ProjectScreen(
     onBack: () -> Unit,
     onExport: () -> Unit,
     onDelete: () -> Unit,
+    onCopyAsNew: (Boolean) -> Unit,
+    onSuffix: (String) -> Unit,
+    onLabel: (String) -> Unit,
     onPickImage: (ResourceEntry) -> Unit,
     onUnstage: (String) -> Unit,
     onBuild: () -> Unit,
@@ -46,7 +49,7 @@ fun ProjectScreen(
             2 -> ManifestTab(details.manifest)
             3 -> ResourcesTab(details.resources)
             4 -> Later("DEX and code view", "Smali and Java-like views are planned for Phase 3. The Files tab lists the DEX files in this APK.")
-            else -> BuildTab(details, build, blockedReason, onPickImage, onUnstage, onBuild, onExportForged, onInstall)
+            else -> BuildTab(details, build, blockedReason, onCopyAsNew, onSuffix, onLabel, onPickImage, onUnstage, onBuild, onExportForged, onInstall)
         }
     }
 }

@@ -12,7 +12,7 @@ class EditabilityTest {
     @Test fun cleanAppReportsNothingFoundButStillWarnsAboutSignature() {
         val r = assess()
         assertEquals(Verdict.NOTHING_FOUND, r.verdict)
-        assertTrue(r.findings.any { it.title.contains("different signature") })
+        assertTrue(r.findings.any { it.title.contains("different app") })
     }
 
     @Test fun splitBaseIsABlocker() {
