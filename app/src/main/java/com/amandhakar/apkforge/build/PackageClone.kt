@@ -73,6 +73,13 @@ object PackageClone {
         val patches = ArrayList<AttrPatch>()
         fun patch(el: AxmlElement, a: AxmlAttr, value: String, what: String) { patches += AttrPatch(el.index, a.namespace, a.name, value); renamed += what }
 
+        // Every permission, group or tree the app DEFINES must be unique on the phone, wherever its name comes from:
+        // two apps defining the same name make Android refuse the install. References are renamed to match, and
+        // only references to names this app defines (a permission some other app owns must keep its name).
+        val definedPermissions = doc.elements.filter { it.name in setOf("permission", "permission-group", "permission-tree") }
+            .mapNotNull { e -> e.attrs.firstOrNull { it.name == "name" && it.namespace != null }?.value }.toSet()
+        fun permission(v: String): String? = if (v in definedPermissions) (swap(v) ?: "$v.${spec.suffix}") else null
+
         val launchers = launcherActivities(doc)
         for (el in doc.elements) for (a in el.attrs) {
             val v = a.value ?: continue
@@ -85,8 +92,10 @@ object PackageClone {
                     patch(el, a, out.joinToString(";"), "authorities: $v → ${out.joinToString(";")}")
                 }
                 el.name in setOf("permission", "permission-group", "permission-tree", "uses-permission", "uses-permission-sdk-23") && a.name == "name" && isAndroid ->
-                    swap(v)?.let { patch(el, a, it, "${el.name}: $v → $it") }
-                a.name in setOf("permission", "readPermission", "writePermission", "taskAffinity", "process") && isAndroid ->
+                    permission(v)?.let { patch(el, a, it, "${el.name}: $v → $it") }
+                a.name in setOf("permission", "readPermission", "writePermission", "permissionGroup") && isAndroid ->
+                    permission(v)?.let { patch(el, a, it, "${el.name} ${a.name}: $v → $it") }
+                a.name in setOf("taskAffinity", "process") && isAndroid ->
                     swap(v)?.let { patch(el, a, it, "${el.name} ${a.name}: $v → $it") }
                 el.name == "instrumentation" && a.name == "targetPackage" && isAndroid -> swap(v)?.let { patch(el, a, it, "instrumentation target: $v → $it") }
             }

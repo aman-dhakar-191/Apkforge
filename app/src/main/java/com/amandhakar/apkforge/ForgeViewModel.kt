@@ -127,7 +127,15 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
     init {
         refreshProjects()
         refreshKey()
-        viewModelScope.launch { ForgeInstaller.results.collect { msg -> _state.value = _state.value.copy(message = msg) } }
+        ForgeInstaller.takeSaved(app)?.let { _state.value = _state.value.copy(message = it.message) }
+        viewModelScope.launch {
+            ForgeInstaller.outcomes.collect { r ->
+                // only Android's INSTALL_* code is logged: the message can contain package names
+                log.event("install_result", "status" to r.status, "code" to (r.token ?: "-"))
+                ForgeInstaller.takeSaved(getApplication()) // shown now, so it need not be shown again at the next start
+                _state.value = _state.value.copy(message = r.message)
+            }
+        }
     }
 
     fun refreshProjects() {

@@ -27,6 +27,12 @@ class PackageCloneTest {
         assertTrue(xml.contains("android:name=\"$old.forge.permission.PRIV\""))
         assertTrue(xml.contains("android:name=\"$old.forge.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION\""))
         assertTrue(xml.contains("android:permission=\"$old.forge.permission.PRIV\"")) // the service's
+        // permissions defined under another name are made unique too, and every reference follows
+        assertTrue(xml, xml.contains("android:name=\"vendor.permission.SHARED.forge\""))
+        assertEquals(3, Regex("vendor\\.permission\\.SHARED\\.forge").findAll(xml).count()) // definition, uses-permission, the provider's android:permission
+        assertTrue(xml.contains("android:name=\"vendor.group.G.forge\""))
+        assertTrue(xml.contains("android:permissionGroup=\"vendor.group.G.forge\""))
+        assertTrue(xml.contains("android:name=\"vendor.permission.G1.forge\""))
         assertTrue(xml.contains("android:process=\"$old.forge.proc\""))
         assertTrue(xml.contains("android:taskAffinity=\"$old.forge.aff\""))
     }
@@ -34,12 +40,14 @@ class PackageCloneTest {
     @Test fun thingsThatMustNotChangeAreUntouched() {
         assertTrue(xml.contains("android:name=\"android.permission.CAMERA\""))
         assertTrue(xml.contains("android:process=\":remote\""))
+        // a permission some other app owns keeps its name, even with the app's prefix
+        assertTrue(xml.contains("android:name=\"$old.permission.EXTERNAL\""))
         // class names still point at the code inside the app
         for (c in listOf("MainActivity", "NoLabelActivity", "Two", "Svc", "Rcv", "Rcv2")) assertTrue(c, xml.contains("android:name=\"$old.$c\""))
         // and the old package name appears nowhere else as a name
         val leftovers = Regex("android:(name|authorities|permission|process|taskAffinity)=\"([^\"]*)\"").findAll(xml)
             .map { it.groupValues[2] }.filter { it.startsWith("$old.") && !it.startsWith("$old.forge") }.toSet()
-        assertEquals(setOf("MainActivity", "NoLabelActivity", "Two", "Svc", "Rcv", "Rcv2").map { "$old.$it" }.toSet(), leftovers)
+        assertEquals((setOf("MainActivity", "NoLabelActivity", "Two", "Svc", "Rcv", "Rcv2", "permission.EXTERNAL")).map { "$old.$it" }.toSet(), leftovers)
     }
 
     @Test fun theHomeScreenNameIsChangedOnlyWhereItShows() {

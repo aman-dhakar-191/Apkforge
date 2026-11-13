@@ -15,12 +15,29 @@ import java.io.File
  * installs, replaces or uninstalls anything silently.
  */
 object ForgeInstaller {
-    private val _results = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    /** What happened, for showing to the user. [token] is Android's INSTALL_* code when it gave one (no app names). */
+    class Result(val message: String, val status: Int, val token: String?)
 
-    /** Plain-language messages about how an install went, for showing to the user. */
-    val results: SharedFlow<String> = _results
+    private val _outcomes = MutableSharedFlow<Result>(extraBufferCapacity = 8)
+    val outcomes: SharedFlow<Result> = _outcomes
 
-    internal fun report(message: String) { _results.tryEmit(message) }
+    /**
+     * Also saved, because the app can be restarted while Android's installer is on screen, and then nobody is
+     * listening when the answer arrives. The next start picks the saved answer up with [takeSaved].
+     */
+    internal fun report(context: Context, message: String, status: Int, token: String?) {
+        context.applicationContext.getSharedPreferences("install", Context.MODE_PRIVATE).edit()
+            .putString("message", message).putInt("status", status).putString("token", token).apply()
+        _outcomes.tryEmit(Result(message, status, token))
+    }
+
+    fun takeSaved(context: Context): Result? {
+        val p = context.applicationContext.getSharedPreferences("install", Context.MODE_PRIVATE)
+        val m = p.getString("message", null) ?: return null
+        val r = Result(m, p.getInt("status", 0), p.getString("token", null))
+        p.edit().clear().apply()
+        return r
+    }
 
     fun canInstall(context: Context): Boolean = context.packageManager.canRequestPackageInstalls()
 
@@ -51,13 +68,11 @@ class InstallReceiver : BroadcastReceiver() {
                 val confirm = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT) ?: return
                 context.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }
-            PackageInstaller.STATUS_SUCCESS -> ForgeInstaller.report("Installed.")
-            PackageInstaller.STATUS_FAILURE_ABORTED -> ForgeInstaller.report("Install cancelled.")
-            PackageInstaller.STATUS_FAILURE_CONFLICT, PackageInstaller.STATUS_FAILURE_INCOMPATIBLE -> ForgeInstaller.report(
-                "Android refused to install it: the installed copy of this app is signed with a different key than the modified copy. " +
-                    "To install the modified copy you would have to uninstall the original first, which deletes the app's data. Apkforge will not do that for you.",
-            )
-            else -> ForgeInstaller.report("Install failed: ${intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "status $status"}")
+            PackageInstaller.STATUS_SUCCESS -> ForgeInstaller.report(context, "Installed.", status, null)
+            else -> {
+                val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+                ForgeInstaller.report(context, InstallFailure.explain(status, message), status, InstallFailure.token(message))
+            }
         }
     }
 }
