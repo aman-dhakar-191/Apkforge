@@ -56,6 +56,10 @@ class Workspace(private val root: File, private val clock: () -> Long = System::
             .mapNotNull { read(it) }
             .sortedByDescending { it.createdAtMillis }
 
+    /** Probably the same file imported before: another project with the same name and size. */
+    fun hasProbableDuplicate(p: Project): Boolean =
+        list().any { it.id != p.id && it.displayName == p.displayName && it.sizeBytes == p.sizeBytes }
+
     fun get(id: String): Project? = dirOf(id)?.let { read(it) }
 
     fun originalApk(id: String): File? = dirOf(id)?.let { File(it, "input/base.apk") }?.takeIf { it.isFile }
