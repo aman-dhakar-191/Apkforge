@@ -12,7 +12,7 @@ compatibility is marked as a guess unless stated.
 | Resource table (`resources.arsc`) | Own reader, later; or `net.dongliu:apk-parser` 2.6.10 | BSD 2-Clause | Guess: pure Java and fine. Not tried. |
 | DEX to smali, and back | `com.android.tools.smali:smali-baksmali`, `smali`, `smali-dexlib2` 3.0.10 (Google's published build of smali) | BSD 3-Clause | Guess: pure Java; depends on Guava `31.1-android`, a build made for Android. Not tried. |
 | Java-like decompile | `io.github.skylot:jadx-core` 1.5.6 | Apache 2.0 | Guess: too heavy for a phone (large dependency tree, lots of memory). Deferred. |
-| Signing and verifying | `com.android.tools.build:apksig` (stable 9.5.1) | Apache 2.0 | Guess: good. It is the same library Android's own tools use, pure Java, no listed dependencies. Not tried. |
+| Signing and verifying | `com.android.tools.build:apksig` 9.5.1 | Apache 2.0 | **Checked:** Java 8 bytecode, no dependencies, none of the known Android-crash patterns in its classes (scanned with javap). Used in Apkforge. Output verified with Android's own `apksigner verify`, `zipalign -c -P 16` and `aapt2 dump badging` on a 7 MB APK. Not yet run on a phone. |
 | Resource rebuilding | `aapt2` | Apache 2.0 | **No.** Google publishes it only as `linux`, `osx` and `windows` jars. The `android`, `android-arm64` and `linux-arm64` files do not exist (checked: HTTP 404). Running it on a phone would mean building and shipping our own ARM binary from AOSP source. |
 
 ## The rebuilding question
@@ -31,5 +31,4 @@ Recommended approach instead, which needs no `aapt2`:
 4. Re-zip, align, sign with `apksig`, verify with `apksig`, then install through Android's installer.
 
 This limits edits to a known, tested set. Anything outside it is reported as "not supported" and
-not attempted. Whether the smali and apksig libraries really run on Android is the next thing to
-verify (spike on a device) before building Phase 4 and 5 on them.
+not attempted. Image replacement, rebuilding, signing and installing are now built on this plan (smali is not needed for UI edits). What is still unverified is running `apksig` on a phone.

@@ -89,6 +89,13 @@ class Workspace(private val root: File, private val clock: () -> Long = System::
         }
     }
 
+    /** A file in the project's `output/` folder (created if needed). */
+    fun outputFile(id: String, name: String): File {
+        require(Regex("[A-Za-z0-9._-]{1,80}").matches(name)) { "bad output name" }
+        val dir = File(dirOf(id) ?: throw IOException("No such project"), "output").apply { mkdirs() }
+        return File(dir, name)
+    }
+
     fun splitFiles(id: String): List<File> =
         (dirOf(id)?.let { File(it, "input/splits").listFiles { f -> f.isFile && f.name.endsWith(".apk") } } ?: emptyArray())
             .sortedBy { it.name }

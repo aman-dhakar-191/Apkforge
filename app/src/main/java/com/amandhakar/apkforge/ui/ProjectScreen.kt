@@ -11,13 +11,26 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.amandhakar.apkforge.BuildUi
 import com.amandhakar.apkforge.ProjectDetails
 import com.amandhakar.apkforge.core.*
 
 private val TABS = listOf("Overview", "Files", "Manifest", "Resources", "Code", "Build")
 
 @Composable
-fun ProjectScreen(details: ProjectDetails, onBack: () -> Unit, onExport: () -> Unit, onDelete: () -> Unit) {
+fun ProjectScreen(
+    details: ProjectDetails,
+    build: BuildUi,
+    blockedReason: String?,
+    onBack: () -> Unit,
+    onExport: () -> Unit,
+    onDelete: () -> Unit,
+    onPickImage: (ResourceEntry) -> Unit,
+    onUnstage: (String) -> Unit,
+    onBuild: () -> Unit,
+    onExportForged: () -> Unit,
+    onInstall: () -> Unit,
+) {
     var tab by remember { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -33,7 +46,7 @@ fun ProjectScreen(details: ProjectDetails, onBack: () -> Unit, onExport: () -> U
             2 -> ManifestTab(details.manifest)
             3 -> ResourcesTab(details.resources)
             4 -> Later("DEX and code view", "Smali and Java-like views are planned for Phase 3. The Files tab lists the DEX files in this APK.")
-            else -> Later("Build, sign and install", "Rebuilding, signing and installing are later phases. This version only inspects and exports the untouched original.")
+            else -> BuildTab(details, build, blockedReason, onPickImage, onUnstage, onBuild, onExportForged, onInstall)
         }
     }
 }

@@ -1,0 +1,15 @@
+Binary APK
+Package name=com.example.densfx id=7f
+  type drawable id=01 entryCount=2
+    resource 0x7f010000 drawable/logo
+      () (file) res/drawable/logo.png type=PNG
+      (hdpi) (file) res/drawable-hdpi-v4/logo.png type=PNG
+      (xxhdpi) (file) res/drawable-xxhdpi-v4/logo.png type=PNG
+    resource 0x7f010001 drawable/vec
+      (anydpi) (file) res/drawable-anydpi-v21/vec.xml type=XML
+  type mipmap id=02 entryCount=1
+    resource 0x7f020000 mipmap/logo
+      (xhdpi) (file) res/mipmap-xhdpi-v4/logo.png type=PNG
+  type string id=03 entryCount=1
+    resource 0x7f030000 string/app_name
+      () "Density Fixture"

@@ -1,5 +1,6 @@
 package com.amandhakar.apkforge
 
+import com.amandhakar.apkforge.core.readUpTo
 import android.app.Application
 import android.content.Context
 import android.net.Uri
@@ -7,6 +8,18 @@ import android.os.Build
 import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.amandhakar.apkforge.build.ApkChecks
+import com.amandhakar.apkforge.build.ApkEdit
+import com.amandhakar.apkforge.build.ApkRebuilder
+import com.amandhakar.apkforge.build.ApkSigning
+import com.amandhakar.apkforge.build.EditPlan
+import com.amandhakar.apkforge.build.ForgeInstaller
+import com.amandhakar.apkforge.build.ImageConverter
+import com.amandhakar.apkforge.build.ImageKind
+import com.amandhakar.apkforge.build.SigningKeys
+import com.amandhakar.apkforge.build.VerifyReport
+import com.amandhakar.apkforge.core.ResourceEntry
+import com.amandhakar.apkforge.core.SplitKind
 import com.amandhakar.apkforge.core.InspectionResult
 import com.amandhakar.apkforge.core.EditabilityReport
 import com.amandhakar.apkforge.core.Editability
@@ -62,9 +75,27 @@ data class UiState(
     val installed: List<InstalledApp>? = null,
     /** Set when an installed app's APK could not be copied: shows the explanation and the file-picker fallback. */
     val accessProblem: AccessProblem? = null,
+    val build: BuildUi = BuildUi(),
+    /** SHA-256 of Apkforge's signing key, null when there is no key yet. */
+    val keyFingerprint: String? = null,
 )
 
 data class AccessProblem(val appLabel: String, val explanation: String)
+
+/** A picture the user chose for one resource, already converted for every file that resource uses. */
+class StagedImage(val resource: String, val replacements: Map<String, ByteArray>)
+
+class BuildOutcome(
+    val apk: File, val report: VerifyReport, val sizeBytes: Long, val fingerprint: String,
+    val changes: List<String>, val createdKey: Boolean,
+)
+
+data class BuildUi(
+    val staged: List<StagedImage> = emptyList(),
+    val running: String? = null,
+    val outcome: BuildOutcome? = null,
+    val problem: String? = null,
+)
 
 class ForgeViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = app.getSharedPreferences("settings", Context.MODE_PRIVATE)
@@ -75,13 +106,21 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
     private val arscReader = ArscReader()
     private val dexScanner = DexClassScanner()
     private val splitReader = SplitSetReader()
+    private val keys = SigningKeys(File(app.filesDir, "keys"))
+    private val rebuilder = ApkRebuilder()
+    private val signing = ApkSigning()
+    private val checks = ApkChecks()
     private val installedReader = InstalledAppsReader(app)
     private val installedImporter = InstalledApkImporter(workspace, MAX_IMPORT_BYTES)
 
     private val _state = MutableStateFlow(UiState(debugLogEnabled = prefs.getBoolean(KEY_DEBUG, false)))
     val state: StateFlow<UiState> = _state
 
-    init { refreshProjects() }
+    init {
+        refreshProjects()
+        refreshKey()
+        viewModelScope.launch { ForgeInstaller.results.collect { msg -> _state.value = _state.value.copy(message = msg) } }
+    }
 
     fun refreshProjects() {
         viewModelScope.launch {
@@ -116,7 +155,7 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun open(id: String, justImported: Boolean = false, notice: String? = null) {
-        _state.value = _state.value.copy(busy = "Reading APK…", message = null)
+        _state.value = _state.value.copy(busy = "Reading APK…", message = null, build = BuildUi())
         viewModelScope.launch {
             var duplicate = false
             val details = withContext(Dispatchers.IO) {
@@ -225,7 +264,7 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun close() { _state.value = _state.value.copy(details = null) }
+    fun close() { _state.value = _state.value.copy(details = null, build = BuildUi()) }
 
     fun delete(id: String) {
         viewModelScope.launch {
@@ -300,6 +339,141 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             _state.value = _state.value.copy(message = msg)
+        }
+    }
+
+    // ---- signing key
+    fun refreshKey() {
+        viewModelScope.launch {
+            val fp = withContext(Dispatchers.IO) { if (!keys.exists()) null else try { keys.load().fingerprint } catch (e: Exception) { "unreadable" } }
+            _state.value = _state.value.copy(keyFingerprint = fp)
+        }
+    }
+
+    fun createKey() {
+        viewModelScope.launch {
+            val msg = withContext(Dispatchers.IO) { try { keys.create(); log.event("key_created"); null } catch (e: Exception) { "Could not create the key: ${e.message}" } }
+            refreshKey(); if (msg != null) message(msg)
+        }
+    }
+
+    /** Only called after the user confirms: apps signed with this key can no longer be updated by Apkforge. */
+    fun deleteKey() {
+        viewModelScope.launch { withContext(Dispatchers.IO) { keys.delete(); log.event("key_deleted") }; refreshKey() }
+    }
+
+    // ---- building a modified copy
+    private fun setBuild(f: (BuildUi) -> BuildUi) { _state.value = _state.value.copy(build = f(_state.value.build)) }
+
+    /** The reason this app cannot be rebuilt in this version, or null. */
+    fun buildBlockedReason(d: ProjectDetails): String? = when {
+        d.project.system -> "This is a system app. A modified copy cannot replace it."
+        d.split?.kind == SplitKind.BASE_NEEDS_SPLITS || d.split?.kind == SplitKind.SPLIT_PART -> "This is a split app. Rebuilding and re-signing a whole set is not available in this version."
+        d.inspection !is InspectionResult.Ok -> "This file could not be read as an APK."
+        (d.resources as? ResourceResult.Ok) == null -> "This APK has no readable resource table, so there are no images to pick from."
+        else -> null
+    }
+
+    fun stageImage(entry: ResourceEntry, uri: Uri) {
+        val d = _state.value.details ?: return
+        setBuild { it.copy(problem = null, running = "Preparing the picture…", outcome = null) }
+        viewModelScope.launch {
+            val result: Pair<StagedImage?, String?> = withContext(Dispatchers.IO) {
+                try {
+                    val apk = workspace.originalApk(d.project.id) ?: return@withContext null to "The project's APK is missing."
+                    val entries = (d.inspection as? InspectionResult.Ok)?.entries ?: return@withContext null to "This file could not be read."
+                    val picked = getApplication<Application>().contentResolver.openInputStream(uri)?.use { it.readUpTo(EditPlan.MAX_REPLACEMENT_BYTES + 1) }
+                    if (picked == null || picked.isEmpty()) return@withContext null to "The picture could not be read."
+                    if (picked.size > EditPlan.MAX_REPLACEMENT_BYTES) return@withContext null to "The picture is larger than ${EditPlan.MAX_REPLACEMENT_BYTES / (1024 * 1024)} MB."
+                    val targets = entry.files.filter { f ->
+                        !f.path.endsWith(".9.png") && !f.path.endsWith(".xml") && ImageKind.expectedFor(f.path).let { it == ImageKind.PNG || it == ImageKind.JPEG || it == ImageKind.WEBP }
+                    }
+                    if (targets.isEmpty()) return@withContext null to "This resource has no plain image files Apkforge can replace (it may be a stretchable image or a vector)."
+                    val out = LinkedHashMap<String, ByteArray>()
+                    val cache = HashMap<Triple<ImageKind, Int, Int>, ByteArray?>()
+                    java.util.zip.ZipFile(apk).use { zip ->
+                        for (t in targets) {
+                            val ze = zip.getEntry(t.path) ?: return@withContext null to "A file this resource uses is missing from the APK."
+                            val original = zip.getInputStream(ze).use { it.readUpTo(EditPlan.MAX_REPLACEMENT_BYTES + 1) }
+                            val kind = ImageKind.expectedFor(t.path)!!
+                            val (w, h) = ImageConverter.size(original) ?: return@withContext null to "Could not read the size of an existing image."
+                            out[t.path] = cache.getOrPut(Triple(kind, w, h)) { ImageConverter.convert(picked, kind, w, h) }
+                                ?: return@withContext null to "That picture could not be read as an image."
+                        }
+                    }
+                    for ((path, bytes) in out) EditPlan.problem(ApkEdit.ReplaceFile(path, bytes), entries)?.let { return@withContext null to it }
+                    log.event("image_staged", "files" to out.size)
+                    StagedImage("${entry.type}/${entry.name}", out) to null
+                } catch (e: OutOfMemoryError) {
+                    null to "That picture is too large to process on this phone."
+                } catch (e: Exception) {
+                    null to "Could not prepare the picture: ${e.message ?: e.javaClass.simpleName}"
+                }
+            }
+            val (staged, problem) = result
+            setBuild { b -> b.copy(running = null, problem = problem, staged = if (staged != null) b.staged.filter { it.resource != staged.resource } + staged else b.staged) }
+        }
+    }
+
+    fun unstage(resource: String) { setBuild { b -> b.copy(staged = b.staged.filter { it.resource != resource }, outcome = null) } }
+
+    fun buildCopy() {
+        val d = _state.value.details ?: return
+        val staged = _state.value.build.staged
+        if (staged.isEmpty()) return
+        buildBlockedReason(d)?.let { r -> setBuild { it.copy(problem = r) }; return }
+        setBuild { it.copy(running = "Building, signing and checking…", problem = null, outcome = null) }
+        viewModelScope.launch {
+            val result: Pair<BuildOutcome?, String?> = withContext(Dispatchers.IO) {
+                val unsigned = workspace.outputFile(d.project.id, "forged-unsigned.apk")
+                val signed = workspace.outputFile(d.project.id, "forged.apk")
+                try {
+                    val apk = workspace.originalApk(d.project.id) ?: return@withContext null to "The project's APK is missing."
+                    val entries = (d.inspection as InspectionResult.Ok).entries
+                    val edits = staged.flatMap { s -> s.replacements.map { (p, b) -> ApkEdit.ReplaceFile(p, b) } }
+                    for (e in edits) EditPlan.problem(e, entries)?.let { return@withContext null to it }
+                    rebuilder.rebuild(apk, unsigned, edits.associate { it.entryName to (it as ApkEdit.ReplaceFile).bytes })
+                    val hadKey = keys.exists()
+                    val identity = keys.loadOrCreate()
+                    signing.sign(unsigned, signed, identity, d.metadata?.minSdk ?: 23)
+                    val report = checks.verify(signed, d.metadata?.minSdk)
+                    log.event("build", "files" to edits.size, "verified" to report.verified, "v2" to report.v2, "v3" to report.v3, "bytes" to signed.length())
+                    BuildOutcome(signed, report, signed.length(), identity.fingerprint, EditPlan.summary(edits, entries), createdKey = !hadKey) to null
+                } catch (e: Exception) {
+                    signed.delete()
+                    log.event("build_failed", "reason" to e.javaClass.simpleName)
+                    null to (e.message ?: e.javaClass.simpleName)
+                } finally {
+                    unsigned.delete()
+                }
+            }
+            val (outcome, problem) = result
+            setBuild { it.copy(running = null, outcome = outcome, problem = problem) }
+            refreshKey()
+        }
+    }
+
+    fun exportForged(dest: Uri) {
+        val outcome = _state.value.build.outcome ?: return
+        setBuild { it.copy(running = "Exporting…") }
+        viewModelScope.launch {
+            val msg = withContext(Dispatchers.IO) {
+                try {
+                    getApplication<Application>().contentResolver.openOutputStream(dest)?.use { o -> outcome.apk.inputStream().use { it.copyTo(o) } } ?: error("Android would not open the destination")
+                    log.event("forged_exported"); "Exported the modified APK."
+                } catch (e: Exception) { "Export failed: ${e.message ?: e.javaClass.simpleName}" }
+            }
+            setBuild { it.copy(running = null) }; message(msg)
+        }
+    }
+
+    /** Starts Android's installer for the modified copy. Android shows its own confirmation. */
+    fun installForged() {
+        val outcome = _state.value.build.outcome ?: return
+        if (!outcome.report.verified) { message("The signature check did not pass, so Apkforge will not install this."); return }
+        viewModelScope.launch {
+            val err = withContext(Dispatchers.IO) { try { ForgeInstaller.start(getApplication(), outcome.apk); log.event("install_started"); null } catch (e: Exception) { e.message ?: e.javaClass.simpleName } }
+            if (err != null) message("Could not start the install: $err")
         }
     }
 

@@ -43,6 +43,14 @@ class MainActivity : ComponentActivity() {
             if (uri != null && id != null) vm.exportOriginal(id, uri)
         }
 
+        var pendingImage by remember { mutableStateOf<com.amandhakar.apkforge.core.ResourceEntry?>(null) }
+        val pickPicture = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            val entry = pendingImage; pendingImage = null
+            if (uri != null && entry != null) vm.stageImage(entry, uri)
+        }
+        val saveForged = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/vnd.android.package-archive")) { uri ->
+            if (uri != null) vm.exportForged(uri)
+        }
         val saveLog = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
             if (uri != null) vm.saveLog(uri)
         }
@@ -67,13 +75,22 @@ class MainActivity : ComponentActivity() {
                         onClear = vm::clearLog,
                         onShare = { shareLog() },
                         onSave = { saveLog.launch("apkforge-debug-log.txt") },
+                        onCreateKey = vm::createKey,
+                        onDeleteKey = vm::deleteKey,
                         onBack = { showSettings = false },
                     )
                     state.details != null -> ProjectScreen(
                         details = state.details!!,
+                        build = state.build,
+                        blockedReason = vm.buildBlockedReason(state.details!!),
                         onBack = vm::close,
                         onExport = { saveAs.launch(exportName(state.details!!)) },
                         onDelete = { vm.delete(state.details!!.project.id) },
+                        onPickImage = { pendingImage = it; pickPicture.launch(arrayOf("image/*")) },
+                        onUnstage = vm::unstage,
+                        onBuild = vm::buildCopy,
+                        onExportForged = { saveForged.launch((state.details!!.metadata?.packageName ?: "app") + "-modified.apk") },
+                        onInstall = { installModified() },
                     )
                     showInstalled -> InstalledAppsScreen(
                         apps = state.installed,
@@ -99,6 +116,15 @@ class MainActivity : ComponentActivity() {
 
     private fun exportName(d: ProjectDetails): String =
         (d.metadata?.packageName ?: "app") + "-original.apk"
+
+    private fun installModified() {
+        if (!com.amandhakar.apkforge.build.ForgeInstaller.canInstall(this)) {
+            vm.message("Allow Apkforge to install apps on the next screen, then come back and tap Install again.")
+            startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:$packageName")))
+        } else {
+            vm.installForged()
+        }
+    }
 
     private fun shareLog() {
         val file = vm.logForSharing()

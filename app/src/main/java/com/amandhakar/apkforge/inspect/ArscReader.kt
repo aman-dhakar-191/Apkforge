@@ -1,7 +1,9 @@
 package com.amandhakar.apkforge.inspect
 
+import com.amandhakar.apkforge.core.readUpTo
 import com.amandhakar.apkforge.core.ResourceDecoder
 import com.amandhakar.apkforge.core.ResourceEntry
+import com.amandhakar.apkforge.core.ResourceFile
 import com.amandhakar.apkforge.core.ResourceResult
 import com.amandhakar.apkforge.core.ResourceTable
 import java.io.File
@@ -23,7 +25,7 @@ class ArscReader(
         val bytes = ZipFile(apk).use { zip ->
             val e = zip.getEntry("resources.arsc") ?: return ResourceResult.Failed("This APK has no resources.arsc")
             if (e.size > maxBytes) return ResourceResult.Failed("resources.arsc is larger than $maxBytes bytes")
-            zip.getInputStream(e).use { it.readNBytes(maxBytes + 1) }
+            zip.getInputStream(e).use { it.readUpTo(maxBytes + 1) }
         }
         if (bytes.size > maxBytes) ResourceResult.Failed("resources.arsc is larger than $maxBytes bytes")
         else ResourceResult.Ok(parse(bytes))
@@ -88,6 +90,8 @@ class ArscReader(
         need(configSize >= 4 && 20 + configSize <= headerSize, "bad configuration size")
         var isDefault = true
         for (i in 24 until 20 + configSize) if (b.get(start + i).toInt() != 0) { isDefault = false; break }
+        val density = if (configSize >= 16) b.getShort(start + 34).toInt() and 0xFFFF else 0
+        val configLabel: String? = if (isDefault) null else densityLabel(density) ?: "other"
         val typeName = typeNames.getOrNull(typeId - 1) ?: return
 
         val sparse = flags and 0x01 != 0
@@ -124,13 +128,14 @@ class ArscReader(
                 format(b.get(ep + 11).toInt() and 0xFF, b.getInt(ep + 12), globals)
             } else null
 
+            val file = if (eflags and 0x01 == 0 && ep + 16 <= end && (b.get(ep + 11).toInt() and 0xFF) == 0x03 && value?.startsWith("res/") == true) ResourceFile(value, configLabel) else null
             val id = (pkgId shl 24) or (typeId shl 16) or index
             val old = out[id]
             if (old == null) {
                 if (out.size >= maxEntries) throw AxmlException("too many resources")
-                out[id] = ResourceEntry(id, typeName, key, value, 1)
+                out[id] = ResourceEntry(id, typeName, key, value, 1, listOfNotNull(file))
             } else {
-                out[id] = old.copy(value = if (isDefault) value else old.value, configCount = old.configCount + 1)
+                out[id] = old.copy(value = if (isDefault) value else old.value, configCount = old.configCount + 1, files = old.files + listOfNotNull(file))
             }
         }
     }
@@ -145,6 +150,13 @@ class ArscReader(
         0x12 -> if (data != 0) "true" else "false"
         in 0x1c..0x1f -> "#%08x".format(data)
         else -> null
+    }
+
+    private fun densityLabel(d: Int): String? = when (d) {
+        0 -> null
+        120 -> "ldpi"; 160 -> "mdpi"; 213 -> "tvdpi"; 240 -> "hdpi"; 320 -> "xhdpi"; 480 -> "xxhdpi"; 640 -> "xxxhdpi"
+        0xFFFE -> "anydpi"; 0xFFFF -> "nodpi"
+        else -> "${d}dpi"
     }
 
     private fun dimension(data: Int): String {

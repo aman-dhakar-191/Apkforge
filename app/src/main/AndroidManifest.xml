@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Needed to hand a rebuilt APK to Android's installer (Android still asks the user each time). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- No INTERNET permission on purpose: everything runs offline on the device.
          No QUERY_ALL_PACKAGES either. The query below lets the app see apps that have a launcher icon,
          and nothing more. -->
@@ -26,6 +29,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <receiver
+            android:name=".build.InstallReceiver"
+            android:exported="false" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

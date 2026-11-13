@@ -42,7 +42,7 @@ internal object StringPool {
         len()
         val byteLen = len()
         need(p + byteLen <= end, "string runs past the chunk")
-        val arr = ByteArray(byteLen); b.get(p, arr)
+        val arr = ByteArray(byteLen); System.arraycopy(b.array(), p, arr, 0, byteLen) // ByteBuffer.get(int, byte[]) needs Android 14
         return String(arr, Charsets.UTF_8)
     }
 

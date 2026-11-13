@@ -4,7 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
@@ -21,11 +21,34 @@ fun SettingsScreen(
     onClear: () -> Unit,
     onShare: () -> Unit,
     onSave: () -> Unit,
+    onCreateKey: () -> Unit,
+    onDeleteKey: () -> Unit,
     onBack: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TextButton(onBack) { Text("← Back") }
         Text("Settings", style = MaterialTheme.typography.headlineSmall)
+        var confirmDelete by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Signing key", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Modified copies are signed with this key. It stays in the app's private storage and is never logged or shared. " +
+                    "Keep it: apps signed with it can only be updated by a copy signed with the same key.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(state.keyFingerprint?.let { "SHA-256: $it" } ?: "No key yet. It is created the first time you build.", style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (state.keyFingerprint == null) OutlinedButton(onCreateKey) { Text("Create key") }
+                else OutlinedButton({ confirmDelete = true }) { Text("Delete key") }
+            }
+        }
+        if (confirmDelete) AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete the signing key?") },
+            text = { Text("Apps you signed with it can no longer be updated by a copy Apkforge signs, because Android only accepts updates signed with the same key. This cannot be undone.") },
+            confirmButton = { TextButton({ confirmDelete = false; onDeleteKey() }) { Text("Delete") } },
+            dismissButton = { TextButton({ confirmDelete = false }) { Text("Cancel") } },
+        )
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Debug log", style = MaterialTheme.typography.titleMedium)

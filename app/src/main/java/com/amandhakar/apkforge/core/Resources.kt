@@ -11,7 +11,12 @@ data class ResourceEntry(
     val value: String?,
     /** In how many configurations (languages, densities...) this resource is defined. */
     val configCount: Int,
+    /** Files this resource points to, one per configuration (for images: one per screen density). */
+    val files: List<ResourceFile> = emptyList(),
 )
+
+/** [density] is null for the default configuration, else e.g. "xxhdpi" or "other". */
+data class ResourceFile(val path: String, val density: String?)
 
 class ResourceTable(val entries: Map<Int, ResourceEntry>) {
     /** "type/name" for a resource id, or null when the table does not know it. */

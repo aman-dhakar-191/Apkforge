@@ -70,6 +70,8 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.1")
     implementation("androidx.core:core-ktx:1.16.0")
+    // Google's APK signing library (Apache 2.0): signs and verifies APKs. Pure Java 8, no dependencies.
+    implementation("com.android.tools.build:apksig:9.5.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")

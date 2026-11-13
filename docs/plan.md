@@ -6,11 +6,11 @@
    back to the file picker. No root, no hidden APIs, no `QUERY_ALL_PACKAGES`.
 3. **Decode and inspect** (manifest and resource names done; smali next): readable manifest, resources, smali. Java-like view only if a library
    proves reliable on-device.
-4. **Controlled edits**: a few explicit edits (text resources, an image) with a diff before rebuild.
-5. **Rebuild, sign, verify**: without `aapt2` (no Android build exists; see
+4. **Controlled edits** (images done; then layouts, text, colours and values, in that order): a few explicit edits (text resources, an image) with a diff before rebuild.
+5. **Rebuild, sign, verify** (done for the image edit; not yet run on a device): without `aapt2` (no Android build exists; see
    [toolchain.md](toolchain.md)): smali for code, direct patching for a few resource edits, `apksig`
    for signing.
-6. **Install** through Android's package installer only. Never silent, never an automatic uninstall.
+6. **Install** (done) through Android's package installer only. Never silent, never an automatic uninstall.
 
 ## Open questions that need a device
 
