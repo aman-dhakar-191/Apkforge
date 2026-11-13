@@ -1,5 +1,7 @@
 .gradle/
-build/
+# Gradle output only. (An unanchored `build/` also ignored the source package com.amandhakar.apkforge.build.)
+/build/
+/app/build/
 local.properties
 .idea/
 *.iml
