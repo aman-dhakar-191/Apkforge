@@ -1,6 +1,7 @@
 package com.amandhakar.apkforge.inspect
 
 import com.amandhakar.apkforge.core.readUpTo
+import com.amandhakar.apkforge.core.ComplexValue
 import com.amandhakar.apkforge.core.ManifestDecoder
 import com.amandhakar.apkforge.core.ManifestResult
 import java.io.File
@@ -107,7 +108,7 @@ class AxmlDecoder(
                         val raw = b.getInt(a + 8)
                         val dataType = b.get(a + 15).toInt() and 0xFF
                         val data = b.getInt(a + 16)
-                        val text = value(raw, dataType, data, strings)
+                        val text = value(aname, raw, dataType, data, strings)
                         if (depth == 1) root[aname] = text
                         if (depth == 2 && name == "application") application[aname] = text
                         out.append("\n").append("  ".repeat(depth)).append(qualified(ans, aname, strings, prefixes))
@@ -141,16 +142,17 @@ class AxmlDecoder(
         return if (p.isNullOrEmpty()) name else "$p:$name"
     }
 
-    private fun value(raw: Int, type: Int, data: Int, strings: List<String>): String = when (type) {
+    private fun value(attr: String, raw: Int, type: Int, data: Int, strings: List<String>): String = when (type) {
         T_STRING -> str(strings, data)
         T_REFERENCE -> if (data == 0) "@null" else resolver?.invoke(data)?.let { "@$it" } ?: "@0x%08x".format(data)
         T_ATTRIBUTE -> "?0x%08x".format(data)
         T_FLOAT -> java.lang.Float.intBitsToFloat(data).toString()
-        T_INT_DEC -> data.toString()
+        T_INT_DEC -> if ((attr == "layout_width" || attr == "layout_height") && data == -1) "match_parent" else if ((attr == "layout_width" || attr == "layout_height") && data == -2) "wrap_content" else data.toString()
         T_INT_HEX -> "0x%x".format(data)
         T_BOOL -> if (data != 0) "true" else "false"
         in T_COLOR_FIRST..T_COLOR_LAST -> "#%08x".format(data)
-        T_DIMENSION, T_FRACTION -> "0x%08x (${if (type == T_DIMENSION) "dimension" else "fraction"})".format(data)
+        T_DIMENSION -> ComplexValue.dimension(data)
+        T_FRACTION -> ComplexValue.fraction(data)
         else -> if (raw >= 0 && raw < strings.size) strings[raw] else "0x%x (type 0x%x)".format(data, type)
     }
 

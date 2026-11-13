@@ -1,5 +1,6 @@
 package com.amandhakar.apkforge.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -32,6 +33,8 @@ fun BuildTab(
     onBuild: () -> Unit,
     onExport: () -> Unit,
     onInstall: () -> Unit,
+    thumbOfResource: suspend (ResourceEntry, Int) -> android.graphics.Bitmap?,
+    onOpen: (com.amandhakar.apkforge.ViewerTarget) -> Unit,
 ) {
     val table = (d.resources as? ResourceResult.Ok)?.table
     var query by remember { mutableStateOf("") }
@@ -94,6 +97,10 @@ fun BuildTab(
         items(images, key = { it.id }) { e ->
             val staged = b.staged.any { it.resource == "${e.type}/${e.name}" }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Thumb(e.id, 48.dp, { thumbOfResource(e, 96) }, Modifier.clickable {
+                    onOpen(com.amandhakar.apkforge.ViewerTarget("${e.type}/${e.name}", e.files.filter { isPlainImage(it.path) }.map { com.amandhakar.apkforge.ViewerFile(it.density ?: "default", it.path) }))
+                })
+                Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text("${e.type}/${e.name}", style = MaterialTheme.typography.bodyMedium)
                     Text(

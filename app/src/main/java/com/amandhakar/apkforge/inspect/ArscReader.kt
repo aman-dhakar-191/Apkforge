@@ -144,7 +144,7 @@ class ArscReader(
         0x03 -> globals.getOrNull(data)?.let { if (it.length > 200) it.take(200) + "…" else it }
         0x01 -> if (data == 0) "@null" else "@0x%08x".format(data)
         0x04 -> java.lang.Float.intBitsToFloat(data).toString()
-        0x05 -> dimension(data)
+        0x05 -> com.amandhakar.apkforge.core.ComplexValue.dimension(data)
         0x10 -> data.toString()
         0x11 -> "0x%x".format(data)
         0x12 -> if (data != 0) "true" else "false"
@@ -157,14 +157,6 @@ class ArscReader(
         120 -> "ldpi"; 160 -> "mdpi"; 213 -> "tvdpi"; 240 -> "hdpi"; 320 -> "xhdpi"; 480 -> "xxhdpi"; 640 -> "xxxhdpi"
         0xFFFE -> "anydpi"; 0xFFFF -> "nodpi"
         else -> "${d}dpi"
-    }
-
-    private fun dimension(data: Int): String {
-        val radix = (data shr 4) and 3
-        val mult = floatArrayOf(0.00390625f, 3.0517578E-5f, 1.1920929E-7f, 4.656613E-10f)[radix]
-        val v = (data and 0xFFFFFF00.toInt()) * mult
-        val unit = arrayOf("px", "dp", "sp", "pt", "in", "mm").getOrNull(data and 0xF) ?: "?"
-        return "$v$unit"
     }
 
     /** Returns (type, size) of the chunk at [pos], checked against [limit]. */
