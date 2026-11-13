@@ -211,17 +211,36 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { withContext(Dispatchers.IO) { log.clear() }; refreshLog() }
     }
 
-    /** A copy of the log with a short header, for the user to share on purpose. Null when empty. */
-    fun logForSharing(): File? {
+    /** The log with a short header (app and Android version, device model), or null when empty. */
+    private fun logWithHeader(): String? {
         val text = log.read()
         if (text.isBlank()) return null
+        return "Apkforge ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})\n" +
+            "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}), ${Build.MANUFACTURER} ${Build.MODEL}\n\n" + text
+    }
+
+    /** A copy of the log for the user to share on purpose. Null when empty. */
+    fun logForSharing(): File? {
+        val content = logWithHeader() ?: return null
         val dir = File(getApplication<Application>().cacheDir, "shared_logs").apply { mkdirs() }
-        val out = File(dir, "apkforge-debug-log.txt")
-        out.writeText(
-            "Apkforge ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})\n" +
-                "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}), ${Build.MANUFACTURER} ${Build.MODEL}\n\n" + text,
-        )
-        return out
+        return File(dir, "apkforge-debug-log.txt").also { it.writeText(content) }
+    }
+
+    /** Saves the log to a file the user chose. */
+    fun saveLog(dest: Uri) {
+        viewModelScope.launch {
+            val msg = withContext(Dispatchers.IO) {
+                val content = logWithHeader() ?: return@withContext "The log is empty."
+                try {
+                    getApplication<Application>().contentResolver.openOutputStream(dest)?.use { it.write(content.toByteArray()) }
+                        ?: error("Android would not open the destination")
+                    "Log saved."
+                } catch (e: Exception) {
+                    "Could not save the log: ${e.message ?: e.javaClass.simpleName}"
+                }
+            }
+            _state.value = _state.value.copy(message = msg)
+        }
     }
 
     fun message(text: String?) { _state.value = _state.value.copy(message = text) }

@@ -43,6 +43,10 @@ class MainActivity : ComponentActivity() {
             if (uri != null && id != null) vm.exportOriginal(id, uri)
         }
 
+        val saveLog = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+            if (uri != null) vm.saveLog(uri)
+        }
+
         BackHandler(enabled = showSettings || showInstalled || state.details != null) {
             if (showSettings) showSettings = false else if (state.details != null) vm.close() else showInstalled = false
         }
@@ -62,6 +66,7 @@ class MainActivity : ComponentActivity() {
                         onRefresh = vm::refreshLog,
                         onClear = vm::clearLog,
                         onShare = { shareLog() },
+                        onSave = { saveLog.launch("apkforge-debug-log.txt") },
                         onBack = { showSettings = false },
                     )
                     state.details != null -> ProjectScreen(

@@ -12,6 +12,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.amandhakar.apkforge.UiState
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     state: UiState,
@@ -19,6 +20,7 @@ fun SettingsScreen(
     onRefresh: () -> Unit,
     onClear: () -> Unit,
     onShare: () -> Unit,
+    onSave: () -> Unit,
     onBack: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -29,14 +31,15 @@ fun SettingsScreen(
                 Text("Debug log", style = MaterialTheme.typography.titleMedium)
                 Text(
                     "Off by default. When on, Apkforge keeps a short log on this phone of what it did: action names, counts and error types. " +
-                        "It never records file names, paths or APK contents, and nothing is sent anywhere. Sharing it is your choice, from here.",
+                        "It never records file names, paths or APK contents, and nothing is sent anywhere. Saving or sharing it is your choice, from here.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
             Switch(state.debugLogEnabled, onToggle)
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onShare, enabled = state.logText.isNotBlank()) { Text("Share log") }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Button(onSave, enabled = state.logText.isNotBlank()) { Text("Save log") }
+            OutlinedButton(onShare, enabled = state.logText.isNotBlank()) { Text("Share") }
             OutlinedButton(onRefresh) { Text("Refresh") }
             OutlinedButton(onClear, enabled = state.logText.isNotBlank()) { Text("Clear") }
         }
