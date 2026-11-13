@@ -3,7 +3,7 @@ package com.amandhakar.apkforge.core
 import java.io.File
 
 sealed interface ManifestResult {
-    data class Ok(val xml: String, val rootAttributes: Map<String, String> = emptyMap()) : ManifestResult
+    data class Ok(val xml: String, val rootAttributes: Map<String, String> = emptyMap(), val applicationAttributes: Map<String, String> = emptyMap()) : ManifestResult
     data class Failed(val reason: String) : ManifestResult
 }
 
