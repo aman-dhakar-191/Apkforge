@@ -25,7 +25,10 @@ Works now:
   version and the APK path Android reports, and tries to copy that APK into the workspace. If
   Android refuses (it depends on the Android version), Apkforge says so in plain words and offers
   the file picker instead. It never uses root, hidden APIs or other apps' private data.
-  Split APKs: only the base APK is copied for now, and the app says so.
+  Split apps: the base and all the other parts Android lists are copied (into `input/splits/`),
+  best effort: a part Android refuses is reported and the rest are kept. The Overview shows the
+  whole set (sizes, native libraries and resources per part). The parts are copies from this phone,
+  so they match its processor, screen density and languages. Editing a whole set is not built yet.
 
 - **Manifest tab**: the binary AndroidManifest.xml shown as readable XML (own decoder, bounds-checked,
   no dependencies). References to resources are shown by name (`@string/app_name`).
@@ -36,7 +39,7 @@ Works now:
   app is reported as needing its other parts instead of as "complete".
 
 - **Editability check** (Overview): "Can this app be modified?" A checklist from reading the files:
-  split app needing other parts (blocker); Google Play Integrity, SafetyNet, Firebase App Check,
+  system app, or split app (blockers: a system app can't be replaced by a modified copy; whole-set editing is not built); Google Play Integrity, SafetyNet, Firebase App Check,
   Play licensing or root-detection code present, or native libraries named like known code packers
   (warnings); native code, debuggable flag, shortened class names, and the new-signature caveat
   (notes). It reads only each DEX file's class-name table (about 0.2 s for 19 MB). It never says
@@ -49,8 +52,8 @@ rebuilding, signing, installing. How rebuilding could work without `aapt2` is in
 [docs/toolchain.md](docs/toolchain.md). See
 [docs/plan.md](docs/plan.md).
 
-Status of checking: 69 unit tests pass (archive parsing, path safety, workspace, debug log,
-installed-app filtering and copying, manifest and resource decoding checked against `aapt2` output; all 275 resource names of Apkforge's own APK match; code scanner tested on DEX files built by d8) and a release APK builds. **The screens, `PackageManager`
+Status of checking: 81 unit tests pass (archive parsing, path safety, workspace, debug log,
+installed-app filtering and copying, split-set copying, manifest and resource decoding checked against `aapt2` output; all 275 resource names of Apkforge's own APK match; code scanner tested on DEX files built by d8) and a release APK builds. **The screens, `PackageManager`
 reading and whether Android lets the app read other apps' APKs have not been run on a device yet.**
 
 ## Debug log (optional)

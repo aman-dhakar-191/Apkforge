@@ -13,6 +13,8 @@ import com.amandhakar.apkforge.core.Editability
 import com.amandhakar.apkforge.core.ManifestResult
 import com.amandhakar.apkforge.core.ResourceResult
 import com.amandhakar.apkforge.core.SplitInfo
+import com.amandhakar.apkforge.core.SplitPart
+import com.amandhakar.apkforge.inspect.SplitSetReader
 import com.amandhakar.apkforge.core.Splits
 import com.amandhakar.apkforge.inspect.ArscReader
 import com.amandhakar.apkforge.inspect.DexClassScanner
@@ -45,6 +47,8 @@ data class ProjectDetails(
     val split: SplitInfo? = null,
     /** Filled in a moment after the project opens (it reads all the code); null until then. */
     val editability: EditabilityReport? = null,
+    /** The other parts of a split app that were copied (empty for a whole APK). */
+    val parts: List<SplitPart> = emptyList(),
 )
 
 data class UiState(
@@ -70,6 +74,7 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
     private val metadataReader = ApkMetadataReader(app)
     private val arscReader = ArscReader()
     private val dexScanner = DexClassScanner()
+    private val splitReader = SplitSetReader()
     private val installedReader = InstalledAppsReader(app)
     private val installedImporter = InstalledApkImporter(workspace, MAX_IMPORT_BYTES)
 
@@ -110,7 +115,7 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun open(id: String, justImported: Boolean = false) {
+    fun open(id: String, justImported: Boolean = false, notice: String? = null) {
         _state.value = _state.value.copy(busy = "Reading APK…", message = null)
         viewModelScope.launch {
             var duplicate = false
@@ -134,7 +139,7 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                     "resources" to (if (resources is ResourceResult.Ok) resources.table.entries.size else if (resources == null) "none" else "failed"),
                     "split" to (split?.kind ?: "unknown"),
                 )
-                ProjectDetails(project, inspection, meta, manifest, resources, split)
+                ProjectDetails(project, inspection, meta, manifest, resources, split, parts = splitReader.read(workspace.splitFiles(id)))
             }
             if (details != null) computeEditability(details)
             _state.value = _state.value.copy(
@@ -142,6 +147,7 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                 details = details,
                 message = when {
                     details == null -> "That project could not be found."
+                    notice != null -> notice
                     justImported && duplicate -> "You already had a project from a file with this name and size, so this is probably the same APK again. You can delete one."
                     else -> null
                 },
@@ -164,11 +170,17 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
     fun importInstalled(app: InstalledApp) {
         _state.value = _state.value.copy(busy = "Copying ${app.label}…", message = null, accessProblem = null)
         viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) { installedImporter.import(app.label, app.sourceDir) }
+            val result = withContext(Dispatchers.IO) { installedImporter.import(app.label, app.sourceDir, app.splitDirs, app.isSystem) }
             // The log records the outcome only, never which app it was.
-            log.event("installed_copy", "result" to result.javaClass.simpleName, "why" to ((result as? InstalledImport.NotReadable)?.why ?: "-"), "sdk" to Build.VERSION.SDK_INT)
+            log.event("installed_copy", "result" to result.javaClass.simpleName, "why" to ((result as? InstalledImport.NotReadable)?.why ?: "-"), "splits" to ((result as? InstalledImport.Imported)?.let { "${it.splitsCopied}/${it.splitsCopied + it.splitsFailed}" } ?: "-"), "sdk" to Build.VERSION.SDK_INT)
             when (result) {
-                is InstalledImport.Imported -> { refreshProjects(); open(result.project.id, justImported = true) }
+                is InstalledImport.Imported -> {
+                    refreshProjects()
+                    open(
+                        result.project.id, justImported = true,
+                        notice = if (result.splitsFailed > 0) "Android would not let Apkforge copy ${result.splitsFailed} of the app's ${result.splitsCopied + result.splitsFailed} other parts, so the set is incomplete." else null,
+                    )
+                }
                 is InstalledImport.TooLarge -> _state.value = _state.value.copy(busy = null, message = "That APK is larger than ${MAX_IMPORT_BYTES / (1024 * 1024)} MB, which is the limit.")
                 is InstalledImport.NoPath -> _state.value = _state.value.copy(busy = null, accessProblem = AccessProblem(app.label, "Android did not give a usable file location for this app."))
                 is InstalledImport.NotReadable -> _state.value = _state.value.copy(
@@ -198,6 +210,9 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                     hasNativeLibs = ok.summary.nativeAbis.isNotEmpty(),
                     packerLibs = Editability.packerLibraries(ok.entries.map { it.name }),
                     scan = scan,
+                    systemApp = d.project.system,
+                    splitsDeclared = d.project.declaredSplits,
+                    splitsHeld = d.project.copiedSplits,
                 )
                 // Only generic categories are logged, never which app.
                 log.event("editability", "verdict" to r.verdict, "markers" to (scan?.markers?.sorted()?.joinToString(",")?.ifEmpty { "none" } ?: "unscanned"), "skipped" to (scan?.skippedFiles ?: -1))

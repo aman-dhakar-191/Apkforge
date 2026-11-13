@@ -63,7 +63,7 @@ fun InstalledAppsScreen(
                     Text("Package: ${a.packageName}")
                     Text("Version: ${a.versionName ?: "?"} (${a.versionCode})")
                     Text("APK location reported by Android: ${a.sourceDir ?: "none"}")
-                    if (a.splitCount > 0) Text("This app is installed as a base APK plus ${a.splitCount} split APKs. Only the base APK is copied in this version, and it may not work alone.")
+                    if (a.splitCount > 0) Text("This app is installed as a base APK plus ${a.splitCount} other parts. Apkforge will try to copy all of them and tells you if Android refuses any.")
                     Text("Apkforge will try to copy the APK into its own storage. Android may refuse.")
                 }
             },

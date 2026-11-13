@@ -12,6 +12,11 @@ data class Project(
     val displayName: String,
     val createdAtMillis: Long,
     val sizeBytes: Long,
+    /** Imported from an installed system app (part of the phone's own software). */
+    val system: Boolean = false,
+    /** How many other parts Android said the app has, and how many of them were copied. */
+    val declaredSplits: Int = 0,
+    val copiedSplits: Int = 0,
 )
 
 class ImportTooLargeException(val limitBytes: Long) : IOException("File is larger than $limitBytes bytes")
@@ -51,6 +56,43 @@ class Workspace(private val root: File, private val clock: () -> Long = System::
         }
     }
 
+    /** Saves changed details of an existing project (the files are not touched). */
+    fun save(p: Project) { dirOf(p.id)?.let { write(it, p) } }
+
+    /**
+     * Copies one other part of a split app into `input/splits/`. [rawName] is only used if it is a
+     * plain, safe file name; otherwise a generated name is used. Returns the stored file name.
+     */
+    fun addSplit(id: String, rawName: String?, index: Int, source: InputStream, maxBytes: Long): String {
+        val dir = File(dirOf(id) ?: throw IOException("No such project"), "input/splits").apply { mkdirs() }
+        val taken = dir.list()?.toSet().orEmpty()
+        val name = safeSplitName(rawName, index, taken)
+        val target = File(dir, name)
+        val part = File(dir, "$name.part")
+        try {
+            var copied = 0L
+            part.outputStream().use { out ->
+                val buf = ByteArray(64 * 1024)
+                while (true) {
+                    val n = source.read(buf)
+                    if (n < 0) break
+                    copied += n
+                    if (copied > maxBytes) throw ImportTooLargeException(maxBytes)
+                    out.write(buf, 0, n)
+                }
+            }
+            if (!part.renameTo(target)) throw IOException("Could not store the file")
+            return name
+        } catch (e: Throwable) {
+            part.delete()
+            throw e
+        }
+    }
+
+    fun splitFiles(id: String): List<File> =
+        (dirOf(id)?.let { File(it, "input/splits").listFiles { f -> f.isFile && f.name.endsWith(".apk") } } ?: emptyArray())
+            .sortedBy { it.name }
+
     fun list(): List<Project> =
         (root.listFiles { f -> f.isDirectory && ID.matches(f.name) } ?: emptyArray())
             .mapNotNull { read(it) }
@@ -78,6 +120,9 @@ class Workspace(private val root: File, private val clock: () -> Long = System::
             setProperty("name", p.displayName)
             setProperty("created", p.createdAtMillis.toString())
             setProperty("size", p.sizeBytes.toString())
+            setProperty("system", p.system.toString())
+            setProperty("declaredSplits", p.declaredSplits.toString())
+            setProperty("copiedSplits", p.copiedSplits.toString())
         }
         File(dir, "project.properties").outputStream().use { props.store(it, null) }
     }
@@ -90,6 +135,9 @@ class Workspace(private val root: File, private val clock: () -> Long = System::
             displayName = props.getProperty("name") ?: "APK",
             createdAtMillis = props.getProperty("created")?.toLongOrNull() ?: 0L,
             sizeBytes = props.getProperty("size")?.toLongOrNull() ?: 0L,
+            system = props.getProperty("system") == "true",
+            declaredSplits = props.getProperty("declaredSplits")?.toIntOrNull() ?: 0,
+            copiedSplits = props.getProperty("copiedSplits")?.toIntOrNull() ?: 0,
         )
     } catch (_: IOException) {
         null
@@ -99,6 +147,18 @@ class Workspace(private val root: File, private val clock: () -> Long = System::
         name.filter { !it.isISOControl() }.trim().take(120).ifEmpty { "APK" }
 
     companion object {
+        private val SAFE_APK_NAME = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,99}\\.apk")
+
+        /** The last path segment if it is a plain safe name not already used; otherwise split_<index>.apk. */
+        fun safeSplitName(raw: String?, index: Int, taken: Set<String>): String {
+            val last = raw?.substringAfterLast('/')
+            if (last != null && SAFE_APK_NAME.matches(last) && last !in taken) return last
+            var n = "split_$index.apk"
+            var k = index
+            while (n in taken) n = "split_${++k}.apk"
+            return n
+        }
+
         private val ID = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
     }
 }
