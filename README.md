@@ -6,7 +6,7 @@ Local only: no root, no network permission, nothing is uploaded.
 Only use it on apps you own or are authorized to analyze. It is not meant to bypass licensing,
 DRM, signature checks or anti-tamper protections.
 
-## Status: Phase 3 in progress (manifest, resources, editability check)
+## Status: Phase 4/5 started (replace images, rebuild, sign, install)
 
 Works now:
 
@@ -47,13 +47,23 @@ Works now:
   signature checks, DRM, and code decrypted at run time. It reports what is there; it does not help
   get around any protection.
 
-Not built yet (tabs show "not available yet"): smali/Java views, editing,
-rebuilding, signing, installing. How rebuilding could work without `aapt2` is in
+- **Build tab: replace images.** Pick an image resource (every screen-density file it uses is found
+  from `resources.arsc`), pick a picture, and Apkforge converts it to the same format and pixel size
+  (centre-cropped). A summary of the planned changes is shown, then **Build, sign and check**
+  rebuilds a copy (original untouched), signs it with Apkforge's own key, and verifies the
+  signature. Then **Export APK** or **Install…** (Android shows its own confirmation; it never
+  installs, replaces or uninstalls silently). Not available for system apps or split apps.
+- **Signing key** (Settings): created on first build, kept in the app's private storage, never
+  logged. A damaged key is reported, never silently replaced. The modified copy has a different
+  signature than the original, so Android will not install it over the original; you would have to
+  uninstall the original first (deleting its app data), which Apkforge never does for you.
+
+Not built yet: editing layouts, text and colours (planned, in that order), smali/Java views. How rebuilding could work without `aapt2` is in
 [docs/toolchain.md](docs/toolchain.md). See
 [docs/plan.md](docs/plan.md).
 
-Status of checking: 81 unit tests pass (archive parsing, path safety, workspace, debug log,
-installed-app filtering and copying, split-set copying, manifest and resource decoding checked against `aapt2` output; all 275 resource names of Apkforge's own APK match; code scanner tested on DEX files built by d8) and a release APK builds. **The screens, `PackageManager`
+Status of checking: 121 unit tests pass (archive parsing, path safety, workspace, debug log,
+installed-app filtering and copying, split-set copying, manifest and resource decoding checked against `aapt2` output; all 275 resource names of Apkforge's own APK match; code scanner tested on DEX files built by d8; rebuilt and signed APKs accepted by Android's apksigner, zipalign -P 16 and aapt2) and a release APK builds. **The screens, `PackageManager`
 reading and whether Android lets the app read other apps' APKs have not been run on a device yet.**
 
 ## Debug log (optional)

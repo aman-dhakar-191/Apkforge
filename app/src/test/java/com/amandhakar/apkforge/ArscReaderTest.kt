@@ -80,3 +80,25 @@ class ArscReaderTest {
         assertTrue(ArscReader().read(none) is ResourceResult.Failed)
     }
 }
+
+/** fx_dens.* were compiled by aapt2 with images at several densities; the dump is aapt2's own listing. */
+class ArscFilesTest {
+    private fun res(n: String) = javaClass.getResourceAsStream("/$n")!!.readBytes()
+    private val table = ArscReader().parse(res("fx_dens.arsc"))
+    private fun files(id: Int) = table.entries.getValue(id).files.map { (it.density ?: "default") + ":" + it.path }.toSet()
+
+    @Test fun everyDensityFileIsListed() {
+        assertEquals(setOf("default:res/drawable/logo.png", "hdpi:res/drawable-hdpi-v4/logo.png", "xxhdpi:res/drawable-xxhdpi-v4/logo.png"), files(0x7f010000))
+        assertEquals(setOf("xhdpi:res/mipmap-xhdpi-v4/logo.png"), files(0x7f020000))
+        assertEquals(setOf("anydpi:res/drawable-anydpi-v21/vec.xml"), files(0x7f010001))
+        assertTrue(table.entries.getValue(0x7f030000).files.isEmpty()) // a string is not a file
+    }
+
+    @Test fun matchesAapt2ListingExactly() {
+        // every "(config) (file) path" line of aapt2's dump must appear in our file lists
+        val dump = String(res("fx_dens.dump.txt"))
+        val expected = Regex("\\((\\w*)\\) \\(file\\) (\\S+)").findAll(dump).map { (if (it.groupValues[1].isEmpty()) "default" else it.groupValues[1]) + ":" + it.groupValues[2] }.toSet()
+        val ours = table.entries.values.flatMap { e -> e.files.map { (it.density ?: "default") + ":" + it.path } }.toSet()
+        assertEquals(expected, ours)
+    }
+}

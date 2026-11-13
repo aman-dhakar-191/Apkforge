@@ -1,5 +1,6 @@
 package com.amandhakar.apkforge.inspect
 
+import com.amandhakar.apkforge.core.readUpTo
 import com.amandhakar.apkforge.core.ManifestDecoder
 import com.amandhakar.apkforge.core.ManifestResult
 import java.io.File
@@ -32,7 +33,7 @@ class AxmlDecoder(
         val bytes = ZipFile(apk).use { zip ->
             val e = zip.getEntry("AndroidManifest.xml") ?: return ManifestResult.Failed("The APK has no AndroidManifest.xml")
             if (e.size > maxBytes) return ManifestResult.Failed("The manifest is larger than $maxBytes bytes")
-            zip.getInputStream(e).use { it.readNBytes(maxBytes + 1) }
+            zip.getInputStream(e).use { it.readUpTo(maxBytes + 1) }
         }
         if (bytes.size > maxBytes) ManifestResult.Failed("The manifest is larger than $maxBytes bytes")
         else decodeFull(bytes).let { ManifestResult.Ok(it.xml, it.rootAttributes, it.applicationAttributes) }

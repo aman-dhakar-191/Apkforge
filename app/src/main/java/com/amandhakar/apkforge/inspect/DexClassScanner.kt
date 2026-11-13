@@ -1,5 +1,6 @@
 package com.amandhakar.apkforge.inspect
 
+import com.amandhakar.apkforge.core.readUpTo
 import com.amandhakar.apkforge.core.DexScan
 import com.amandhakar.apkforge.core.DexScanner
 import com.amandhakar.apkforge.core.Markers
@@ -30,7 +31,7 @@ class DexClassScanner(
                     val e = zip.getEntry(name) ?: continue
                     if (e.size > maxDexBytes) { skipped++; continue }
                     try {
-                        val bytes = zip.getInputStream(e).use { it.readNBytes(maxDexBytes + 1) }
+                        val bytes = zip.getInputStream(e).use { it.readUpTo(maxDexBytes + 1) }
                         if (bytes.size > maxDexBytes) { skipped++; continue }
                         val r = scanDex(bytes)
                         markers += r.markers; classes += r.appClassCount; short += r.shortNameCount
