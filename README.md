@@ -94,6 +94,11 @@ Works now:
   test file and on Apkforge's own 7 MB APK: only the edited lines differ; `apksigner` and `zipalign` pass.
   **Not built: adding brand-new resources.** Existing code cannot refer to a new ID unless its smali is also
   edited, and adding an entry means rewriting the key pool and every configuration's entry table.
+- **Code tab is easier to navigate.** It opens on **App** code only (not libraries), grouped by package
+  (single-child chains such as `com.acme.app` are joined), with inner classes folded under their outer class and
+  generated classes (lambdas, `R`, `BuildConfig`) hidden unless you switch them on. Classes declared in the manifest are
+  marked Activity, Service, Receiver or Provider, and the app's own package is listed first. Search ignores the
+  package grouping and puts app classes before library ones. Checked on Apkforge's own APK: 823 of 16,563 classes are "App".
 - **Edit manifest values.** In the Manifest tab, **Edit values** lists every attribute of
   `AndroidManifest.xml` (searchable). Text, whole numbers and on/off flags can be changed (for example
   `versionName`, `versionCode`, `allowBackup`); references and the package name cannot (the package name is

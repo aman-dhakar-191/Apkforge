@@ -79,7 +79,7 @@ fun ProjectScreen(
             1 -> Files(details.inspection, thumbOfFile) { viewer = it }
             2 -> ManifestTab(details.manifest, build.manifest.size, blockedReason == null) { editingManifest = true }
             3 -> ResourcesTab(details.resources, thumbOfResource, build.values.map { it.resource }.toSet(), { editing = it }) { viewer = it }
-            4 -> CodeTab(patches, loadIndex, readSmali, checkSmali, savePatch, removePatch)
+            4 -> CodeTab(patches, loadIndex, readSmali, checkSmali, savePatch, removePatch, details.metadata?.packageName, loadManifestSlots)
             else -> BuildTab(details, build, blockedReason, patches.size, onUnstageValue, onUnstageManifest, onCopyAsNew, onSuffix, onLabel, onPickImage, onUnstage, onBuild, onExportForged, onInstall, thumbOfResource) { viewer = it }
         }
     }
