@@ -50,10 +50,17 @@ fun ProjectScreen(
     checkSmali: suspend (String, String) -> List<String>,
     savePatch: suspend (String, String) -> List<String>,
     removePatch: (String) -> Unit,
+    loadValueSlots: suspend (ResourceEntry) -> List<com.amandhakar.apkforge.build.ValueSlot>,
+    resourceId: (String) -> Int?,
+    resourceName: (Int) -> String?,
+    onStageValues: (List<com.amandhakar.apkforge.StagedValue>) -> Unit,
+    onUnstageValue: (Int) -> Unit,
 ) {
     var tab by remember { mutableIntStateOf(0) }
     var viewer by remember { mutableStateOf<ViewerTarget?>(null) }
+    var editing by remember { mutableStateOf<ResourceEntry?>(null) }
     viewer?.let { FileViewerScreen(it, openFile) { viewer = null }; return }
+    editing?.let { ResourceEditScreen(it, build.values, loadValueSlots, resourceId, resourceName, onStageValues) { editing = null }; return }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             TextButton(onBack) { Text("← Back") }
@@ -66,9 +73,9 @@ fun ProjectScreen(
             0 -> Overview(details, onExport, onDelete)
             1 -> Files(details.inspection, thumbOfFile) { viewer = it }
             2 -> ManifestTab(details.manifest)
-            3 -> ResourcesTab(details.resources, thumbOfResource) { viewer = it }
+            3 -> ResourcesTab(details.resources, thumbOfResource, build.values.map { it.resource }.toSet(), { editing = it }) { viewer = it }
             4 -> CodeTab(patches, loadIndex, readSmali, checkSmali, savePatch, removePatch)
-            else -> BuildTab(details, build, blockedReason, patches.size, onCopyAsNew, onSuffix, onLabel, onPickImage, onUnstage, onBuild, onExportForged, onInstall, thumbOfResource) { viewer = it }
+            else -> BuildTab(details, build, blockedReason, patches.size, onUnstageValue, onCopyAsNew, onSuffix, onLabel, onPickImage, onUnstage, onBuild, onExportForged, onInstall, thumbOfResource) { viewer = it }
         }
     }
 }
@@ -216,7 +223,7 @@ private fun splitText(split: SplitInfo?, guessSplit: Boolean, heldParts: Int = 0
 }
 
 @Composable
-private fun ResourcesTab(r: ResourceResult?, thumbOfResource: suspend (ResourceEntry, Int) -> Bitmap?, onOpen: (ViewerTarget) -> Unit) {
+private fun ResourcesTab(r: ResourceResult?, thumbOfResource: suspend (ResourceEntry, Int) -> Bitmap?, changed: Set<String>, onEdit: (ResourceEntry) -> Unit, onOpen: (ViewerTarget) -> Unit) {
     when (r) {
         null -> Later("No resource table", "This APK has no resources.arsc.")
         is ResourceResult.Failed -> Later("Resources not readable", r.reason)
@@ -237,7 +244,7 @@ private fun ResourcesTab(r: ResourceResult?, thumbOfResource: suspend (ResourceE
                     item { FilterChip(type == null, { type = null }, label = { Text("All") }) }
                     items(table.types) { t -> FilterChip(type == t, { type = t }, label = { Text(t) }) }
                 }
-                Text("Tap a resource to open it. Pictures and drawables show a preview.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
+                Text("Tap a picture or drawing to open it, or any other resource to change its value.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
                 LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp)) {
                     items(rows, key = { it.id }) { e ->
                         val files = e.files
@@ -245,7 +252,7 @@ private fun ResourcesTab(r: ResourceResult?, thumbOfResource: suspend (ResourceE
                         Row(
                             Modifier.fillMaxWidth().clickable {
                                 if (files.isNotEmpty()) onOpen(ViewerTarget("${e.type}/${e.name}", files.map { ViewerFile(it.density ?: "default", it.path) }))
-                                else showValue = e
+                                else onEdit(e)
                             }.padding(vertical = 4.dp),
                             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
                         ) {
@@ -256,8 +263,9 @@ private fun ResourcesTab(r: ResourceResult?, thumbOfResource: suspend (ResourceE
                             Column(Modifier.weight(1f)) {
                                 Text("${e.type}/${e.name}", style = MaterialTheme.typography.bodyMedium)
                                 Text(
-                                    (table.displayValue(e) ?: "(no simple value)") + if (e.configCount > 1) "  ·  ${e.configCount} configurations" else "",
+                                    (table.displayValue(e) ?: "(no simple value)") + (if (e.configCount > 1) "  ·  ${e.configCount} configurations" else "") + (if ("${e.type}/${e.name}" in changed) "  ·  will be changed" else ""),
                                     style = MaterialTheme.typography.bodySmall, maxLines = 2,
+                                    color = if ("${e.type}/${e.name}" in changed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                         }

@@ -27,6 +27,7 @@ fun BuildTab(
     b: BuildUi,
     blocked: String?,
     patchCount: Int,
+    onUnstageValue: (Int) -> Unit,
     onCopyAsNew: (Boolean) -> Unit,
     onSuffix: (String) -> Unit,
     onLabel: (String) -> Unit,
@@ -170,7 +171,7 @@ fun BuildTab(
             }
         }
     }
-    if (blocked == null) BuildBar(d, b, patchCount, onRemove, onBuild, onExport, onInstall)
+    if (blocked == null) BuildBar(d, b, patchCount, onUnstageValue, onRemove, onBuild, onExport, onInstall)
     }
 }
 
@@ -180,6 +181,7 @@ private fun BuildBar(
     d: ProjectDetails,
     b: BuildUi,
     patchCount: Int,
+    onUnstageValue: (Int) -> Unit,
     onRemove: (String) -> Unit,
     onBuild: () -> Unit,
     onExport: () -> Unit,
@@ -200,9 +202,15 @@ private fun BuildBar(
                     TextButton({ onRemove(s.resource) }, enabled = b.running == null) { Text("Remove") }
                 }
             }
+            b.values.forEach { v ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Change ${v.label}: ${v.shown.take(40)}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    TextButton({ onUnstageValue(v.edit.offset) }, enabled = b.running == null) { Text("Remove") }
+                }
+            }
             if (patchCount > 0) Text("• Patch the code of $patchCount class${if (patchCount == 1) "" else "es"} (Code tab)", style = MaterialTheme.typography.bodySmall)
-            if (!b.copyAsNew && b.staged.isEmpty() && patchCount == 0) Text("Nothing yet. Pick an image above, or patch some code in the Code tab.", style = MaterialTheme.typography.bodySmall)
-            Button(onBuild, Modifier.fillMaxWidth(), enabled = b.running == null && (b.staged.isNotEmpty() || b.copyAsNew || patchCount > 0)) { Text("Build, sign and check") }
+            if (!b.copyAsNew && b.staged.isEmpty() && b.values.isEmpty() && patchCount == 0) Text("Nothing yet. Pick an image above, change a resource in the Resources tab, or patch some code in the Code tab.", style = MaterialTheme.typography.bodySmall)
+            Button(onBuild, Modifier.fillMaxWidth(), enabled = b.running == null && (b.staged.isNotEmpty() || b.values.isNotEmpty() || b.copyAsNew || patchCount > 0)) { Text("Build, sign and check") }
             b.running?.let { Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp); Spacer(Modifier.width(10.dp)); Text(it, style = MaterialTheme.typography.bodySmall) } }
             b.problem?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             b.outcome?.let { o ->

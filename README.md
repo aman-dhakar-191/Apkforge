@@ -86,6 +86,14 @@ Works now:
   Checked: 608 classes of a real app round-trip through smali with identical code (2 differ only by
   redundant `= null` / `= false` static initialisers, which are the defaults anyway); an edited class of a
   real 7 MB app, rebuilt and signed, passes `apksigner`, `zipalign`, `dexdump` and `d8`.
+- **Edit resource values.** Tap a resource without a file in the Resources tab (strings, colours, numbers,
+  on/off flags, sizes, fractions, references, array and plural items) to change its value, per language or
+  configuration. Changes are planned, shown in the Build tab, and applied to the copy by rewriting
+  `resources.arsc` (new text is appended to the string pool; numbers are written in place). Sizes are
+  encoded exactly like `aapt2` (checked bit for bit on 26 values). Checked with `aapt2 dump resources` on a
+  test file and on Apkforge's own 7 MB APK: only the edited lines differ; `apksigner` and `zipalign` pass.
+  **Not built: adding brand-new resources.** Existing code cannot refer to a new ID unless its smali is also
+  edited, and adding an entry means rewriting the key pool and every configuration's entry table.
 - **Build tab: replace images.** Pick an image resource (every screen-density file it uses is found
   from `resources.arsc`), pick a picture, and Apkforge converts it to the same format and pixel size
   (centre-cropped). A summary of the planned changes is shown, then **Build, sign and check**

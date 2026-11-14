@@ -31,6 +31,38 @@ internal object StringPool {
         return result
     }
 
+    /** String number [index] of the pool at [start], or null if there is none. Decodes only that one string. */
+    fun stringAt(b: ByteBuffer, start: Int, limit: Int, index: Int): String? {
+        if (start < 0 || start + 28 > limit) return null
+        val size = b.getInt(start + 4)
+        if (size < 28 || start + size.toLong() > limit) return null
+        val count = b.getInt(start + 8)
+        if (index !in 0 until count || 28 + index.toLong() * 4 + 4 > size) return null
+        val s = start.toLong() + b.getInt(start + 20) + b.getInt(start + 28 + index * 4)
+        if (s < start || s >= start + size) return null
+        return if (b.getInt(start + 16) and 0x100 != 0) utf8(b, s.toInt(), start + size) else utf16(b, s.toInt(), start + size)
+    }
+
+    /** How many strings at the start of the pool have style spans (bold, italic...). */
+    fun styleCount(b: ByteBuffer, start: Int): Int = b.getInt(start + 12)
+
+    /** A string as a pool stores it: length(s), characters, terminator. */
+    fun encode(s: String, utf8: Boolean): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        if (utf8) {
+            val raw = s.toByteArray(Charsets.UTF_8)
+            need(s.length <= 0x7FFF && raw.size <= 0x7FFF, "a string is too long")
+            fun v(n: Int) { if (n > 0x7F) { out.write((n shr 8) or 0x80); out.write(n and 0xFF) } else out.write(n) }
+            v(s.length); v(raw.size); out.write(raw); out.write(0)
+        } else {
+            need(s.length <= 0x7FFF, "a string is too long")
+            out.write(s.length and 0xFF); out.write(s.length shr 8)
+            for (c in s) { out.write(c.code and 0xFF); out.write(c.code shr 8) }
+            out.write(0); out.write(0)
+        }
+        return out.toByteArray()
+    }
+
     /** Where the characters of string [index] sit: (offset, byte length, isUtf8). For patching a string in place. */
     fun charData(b: ByteBuffer, start: Int, limit: Int, index: Int): Triple<Int, Int, Boolean> {
         need(start >= 0 && start + 28 <= limit, "short string pool")

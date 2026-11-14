@@ -103,6 +103,11 @@ class MainActivity : ComponentActivity() {
                         checkSmali = vm::checkSmali,
                         savePatch = vm::savePatch,
                         removePatch = vm::removePatch,
+                        loadValueSlots = vm::valueSlots,
+                        resourceId = vm::resourceId,
+                        resourceName = vm::resourceName,
+                        onStageValues = vm::stageValues,
+                        onUnstageValue = vm::unstageValue,
                     )
                     showInstalled -> InstalledAppsScreen(
                         apps = state.installed,
