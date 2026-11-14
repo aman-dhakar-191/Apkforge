@@ -97,6 +97,12 @@ class MainActivity : ComponentActivity() {
                         openFile = vm::openFile,
                         thumbOfResource = vm::thumbnailOfResource,
                         thumbOfFile = vm::thumbnailOfFile,
+                        patches = state.patches,
+                        loadIndex = vm::codeIndex,
+                        readSmali = { c, original -> vm.smaliOf(c, original) },
+                        checkSmali = vm::checkSmali,
+                        savePatch = vm::savePatch,
+                        removePatch = vm::removePatch,
                     )
                     showInstalled -> InstalledAppsScreen(
                         apps = state.installed,

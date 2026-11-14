@@ -89,6 +89,46 @@ class Workspace(private val root: File, private val clock: () -> Long = System::
         }
     }
 
+    // ---- code patches: edited smali, one file per class
+    /** Smali text of each patched class, keyed by the class (`Lcom/example/Foo;`). */
+    fun patches(id: String): Map<String, String> {
+        val dir = File(dirOf(id) ?: return emptyMap(), "patches")
+        val index = Properties()
+        try { File(dir, "index.properties").inputStream().use { index.load(it) } } catch (_: IOException) { return emptyMap() }
+        val out = java.util.TreeMap<String, String>()
+        for (name in index.stringPropertyNames()) {
+            val d = index.getProperty(name) ?: continue
+            if (!isPatchName(name) || !PATCH_DESCRIPTOR.matches(d)) continue
+            try { out[d] = File(dir, name).readText(Charsets.UTF_8) } catch (_: IOException) { /* a missing file is a missing patch */ }
+        }
+        return out
+    }
+
+    /** Saves (or replaces) the patch for one class. The file name is a hash, never the class name. */
+    fun savePatch(id: String, descriptor: String, smali: String) {
+        require(PATCH_DESCRIPTOR.matches(descriptor)) { "Not a class name: $descriptor" }
+        require(smali.length <= MAX_PATCH_CHARS) { "The patch is larger than $MAX_PATCH_CHARS characters" }
+        val dir = File(dirOf(id) ?: throw IOException("No such project"), "patches").apply { mkdirs() }
+        val index = Properties()
+        File(dir, "index.properties").takeIf { it.isFile }?.inputStream()?.use { index.load(it) }
+        val name = patchName(descriptor)
+        require(index.containsKey(name) || index.size < MAX_PATCHES) { "At most $MAX_PATCHES classes can be patched" }
+        File(dir, "$name.tmp").writeText(smali, Charsets.UTF_8)
+        if (!File(dir, "$name.tmp").renameTo(File(dir, name))) throw IOException("Could not store the patch")
+        index.setProperty(name, descriptor)
+        File(dir, "index.properties").outputStream().use { index.store(it, null) }
+    }
+
+    fun removePatch(id: String, descriptor: String) {
+        val dir = File(dirOf(id) ?: return, "patches")
+        val file = File(dir, "index.properties").takeIf { it.isFile } ?: return
+        val index = Properties().also { p -> file.inputStream().use { p.load(it) } }
+        val name = patchName(descriptor)
+        File(dir, name).delete()
+        index.remove(name)
+        file.outputStream().use { index.store(it, null) }
+    }
+
     /** A file in the project's `output/` folder (created if needed). */
     fun outputFile(id: String, name: String): File {
         require(Regex("[A-Za-z0-9._-]{1,80}").matches(name)) { "bad output name" }
@@ -154,6 +194,13 @@ class Workspace(private val root: File, private val clock: () -> Long = System::
         name.filter { !it.isISOControl() }.trim().take(120).ifEmpty { "APK" }
 
     companion object {
+        const val MAX_PATCHES = 50
+        const val MAX_PATCH_CHARS = 400_000
+        val PATCH_DESCRIPTOR = Regex("L[^;\\[\\s]{1,300};")
+        private fun patchName(descriptor: String): String =
+            java.security.MessageDigest.getInstance("SHA-256").digest(descriptor.toByteArray()).take(8).joinToString("") { "%02x".format(it) } + ".smali"
+        private fun isPatchName(n: String) = Regex("[0-9a-f]{16}\\.smali").matches(n)
+
         private val SAFE_APK_NAME = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,99}\\.apk")
 
         /** The last path segment if it is a plain safe name not already used; otherwise split_<index>.apk. */

@@ -102,7 +102,7 @@ class DrawingToPictureTest {
         for ((replacements, renames) in listOf(
             ok to mapOf(vec to "res/mipmap-anydpi-v26/ic_launcher.xml"), // takes another file's name
             ok to mapOf(vec to "../evil.png"),                            // unsafe name
-            emptyMap<String, ByteArray>() to mapOf(vec to png),           // renamed but no new content
+            ok to mapOf("res/nothere.xml" to png),                        // renaming something that is not in the APK
         )) try { r.rebuild(src, tmp.root.resolve("b.apk"), replacements, renames); fail() } catch (_: RebuildException) {}
         assertFalse(tmp.root.resolve("b.apk").exists())
     }

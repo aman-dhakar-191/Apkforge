@@ -6,7 +6,7 @@ Local only: no root, no network permission, nothing is uploaded.
 Only use it on apps you own or are authorized to analyze. It is not meant to bypass licensing,
 DRM, signature checks or anti-tamper protections.
 
-## Status: Phase 4/5 (replace images; install as a separate copy)
+## Status: code view and patcher added (Phase 3/4)
 
 Works now:
 
@@ -73,6 +73,19 @@ Works now:
   per dp of the drawing's size (432 px when it has none). Colours are not replaceable yet.
   Checked on Apkforge's own APK: `aapt2` reads the icon foreground as `res/Qr.png`, the adaptive icon is
   untouched, and `apksigner` and `zipalign` pass.
+- **Code tab: read an app's code as smali, and patch it.** Lists every class of every code file (13,623
+  classes of a real 7 MB app in 0.4 s), opens one class at a time as smali (Google's baksmali), and lets you
+  edit it. **Check** assembles your text without saving; **Save patch** stores it only if it assembles. A
+  patch goes into the copy as a small new first code file (`classes.dex`), and the existing code files move
+  up by one (`classes.dex` → `classes2.dex`...). Android loads them in order and the first file that defines
+  a class wins, so the original code stays exactly as it was. Limits: callers that had the old method copied
+  into them ("inlined") keep the old behaviour; smali that assembles but breaks Android's verifier fails
+  when the class loads; classes over 300 thousand characters cannot be edited on the phone. This is an
+  editor for understanding and fixing code you own or may analyze. It has no ready-made patches, and is not
+  meant for removing licence checks, paywalls or other protections.
+  Checked: 608 classes of a real app round-trip through smali with identical code (2 differ only by
+  redundant `= null` / `= false` static initialisers, which are the defaults anyway); an edited class of a
+  real 7 MB app, rebuilt and signed, passes `apksigner`, `zipalign`, `dexdump` and `d8`.
 - **Build tab: replace images.** Pick an image resource (every screen-density file it uses is found
   from `resources.arsc`), pick a picture, and Apkforge converts it to the same format and pixel size
   (centre-cropped). A summary of the planned changes is shown, then **Build, sign and check**
@@ -85,11 +98,11 @@ Works now:
   signature than the original, so Android will not install it over the original; you would have to
   uninstall the original first (deleting its app data), which Apkforge never does for you.
 
-Not built yet: editing layouts, text and colours (planned, in that order), smali/Java views. How rebuilding could work without `aapt2` is in
+Not built yet: editing layouts, text and colours (planned, in that order), a Java-like view (jadx is too heavy for a phone). Third-party software and licences: [docs/third-party.md](docs/third-party.md). How rebuilding could work without `aapt2` is in
 [docs/toolchain.md](docs/toolchain.md). See
 [docs/plan.md](docs/plan.md).
 
-Status of checking: 161 unit tests pass (archive parsing, path safety, workspace, debug log,
+Status of checking: 178 unit tests pass (archive parsing, path safety, workspace, debug log,
 installed-app filtering and copying, split-set copying, manifest and resource decoding checked against `aapt2` output; all 275 resource names of Apkforge's own APK match; code scanner tested on DEX files built by d8; rebuilt and signed APKs accepted by Android's apksigner, zipalign -P 16 and aapt2) and a release APK builds. **The screens, `PackageManager`
 reading and whether Android lets the app read other apps' APKs have not been run on a device yet.**
 

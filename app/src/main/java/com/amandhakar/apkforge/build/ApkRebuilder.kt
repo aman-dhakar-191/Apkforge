@@ -27,21 +27,23 @@ class ApkRebuilder(private val maxReplacementBytes: Int = 64 * 1024 * 1024) {
 
     /**
      * [replacements] maps an entry's name in the original to its new bytes. [renames] maps an entry's name in the
-     * original to a new name for the same place in the file: used to turn a ".xml" drawing into a ".png" picture
-     * (the bytes for it are in [replacements] under the old name).
+     * original to a new name for the same place in the file. A renamed file keeps its content unless [replacements]
+     * has new bytes for it (the old name is the key): that is how a ".xml" drawing becomes a ".png" picture, and how
+     * the dex files shift up by one to make room for a patch. [additions] are new files, written at the end.
      */
-    fun rebuild(original: File, output: File, replacements: Map<String, ByteArray>, renames: Map<String, String> = emptyMap()) {
-        for ((from, to) in renames) {
-            if (!PathSafety.isSafeEntryName(to)) throw RebuildException("Unsafe file name: $to")
-            if (from !in replacements) throw RebuildException("No new content for renamed file $from")
-        }
+    fun rebuild(
+        original: File, output: File, replacements: Map<String, ByteArray>,
+        renames: Map<String, String> = emptyMap(), additions: Map<String, ByteArray> = emptyMap(),
+    ) {
+        for (to in renames.values + additions.keys) if (!PathSafety.isSafeEntryName(to)) throw RebuildException("Unsafe file name: $to")
+        for ((name, bytes) in additions) if (bytes.size > maxReplacementBytes) throw RebuildException("The new file $name is too large")
         for ((name, bytes) in replacements) {
             if (!PathSafety.isSafeEntryName(name)) throw RebuildException("Unsafe file name: $name")
             if (bytes.size > maxReplacementBytes) throw RebuildException("The replacement for $name is too large")
         }
         val tmp = File(output.parentFile, output.name + ".tmp")
         try {
-            ZipFile(original).use { zip -> write(zip, tmp, replacements, renames) }
+            ZipFile(original).use { zip -> write(zip, tmp, replacements, renames, additions) }
             if (output.exists() && !output.delete()) throw RebuildException("Could not replace the old output file")
             if (!tmp.renameTo(output)) throw RebuildException("Could not store the rebuilt file")
         } catch (e: RebuildException) {
@@ -53,7 +55,7 @@ class ApkRebuilder(private val maxReplacementBytes: Int = 64 * 1024 * 1024) {
         }
     }
 
-    private fun write(zip: ZipFile, out: File, replacements: Map<String, ByteArray>, renames: Map<String, String>) {
+    private fun write(zip: ZipFile, out: File, replacements: Map<String, ByteArray>, renames: Map<String, String>, additions: Map<String, ByteArray>) {
         val entries = zip.entries().toList()
         val names = HashSet<String>()
         for (e in entries) {
@@ -63,9 +65,11 @@ class ApkRebuilder(private val maxReplacementBytes: Int = 64 * 1024 * 1024) {
         }
         val missing = replacements.keys - names
         if (missing.isNotEmpty()) throw RebuildException("Not in the APK: ${missing.first()}")
+        val notThere = renames.keys - names
+        if (notThere.isNotEmpty()) throw RebuildException("Not in the APK: ${notThere.first()}")
         val taken = names - renames.keys
-        val newNames = renames.values.toList()
-        if (newNames.size != newNames.toSet().size || newNames.any { it in taken }) throw RebuildException("A renamed file would take the name of another file")
+        val newNames = renames.values.toList() + additions.keys
+        if (newNames.size != newNames.toSet().size || newNames.any { it in taken }) throw RebuildException("A renamed or added file would take the name of another file")
 
         val counter = CountingOutputStream(BufferedOutputStream(out.outputStream(), 64 * 1024))
         ZipOutputStream(counter).use { zos ->
@@ -97,6 +101,12 @@ class ApkRebuilder(private val maxReplacementBytes: Int = 64 * 1024 * 1024) {
                     zos.putNextEntry(ZipEntry(outName).apply { method = ZipEntry.DEFLATED; time = FIXED_TIME })
                     if (replacement != null) zos.write(replacement) else zip.getInputStream(e).use { it.copyTo(zos) }
                 }
+                zos.closeEntry()
+            }
+            for ((name, bytes) in additions) {
+                zos.closeEntry()
+                zos.putNextEntry(ZipEntry(name).apply { method = ZipEntry.DEFLATED; time = FIXED_TIME })
+                zos.write(bytes)
                 zos.closeEntry()
             }
         }

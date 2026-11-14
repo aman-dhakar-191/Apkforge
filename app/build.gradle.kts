@@ -72,6 +72,11 @@ dependencies {
     implementation("androidx.core:core-ktx:1.16.0")
     // Google's APK signing library (Apache 2.0): signs and verifies APKs. Pure Java 8, no dependencies.
     implementation("com.android.tools.build:apksig:9.5.1")
+    // smali / baksmali (BSD-3, Google's build, pure Java): read an app's code as smali and assemble edited smali back.
+    // Only what the library calls needs to ship: the command-line parts (jcommander) and ANTLR's grammar *tool* do not.
+    implementation("com.android.tools.smali:smali-dexlib2:3.0.10")
+    implementation("com.android.tools.smali:smali-baksmali:3.0.10") { exclude(group = "org.jcommander") }
+    implementation("com.android.tools.smali:smali:3.0.10") { exclude(group = "org.jcommander"); exclude(group = "org.antlr", module = "antlr") }
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")
