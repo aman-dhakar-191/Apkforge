@@ -4,7 +4,7 @@
    archive listing, package metadata, export original, optional local debug log.
 2. **Installed apps** (done, untested on a device): list visible apps; try to copy an APK only if Android allows it, else fall
    back to the file picker. No root, no hidden APIs, no `QUERY_ALL_PACKAGES`.
-3. **Decode and inspect** (manifest and resource names done; smali next): readable manifest, resources, smali. Java-like view only if a library
+3. **Decode and inspect** (manifest, resource names and smali done; no Java-like view): readable manifest, resources, smali. Java-like view only if a library
    proves reliable on-device.
 4. **Controlled edits** (images and install-as-copy done; then layouts, text, colours and values, in that order): a few explicit edits (text resources, an image) with a diff before rebuild.
 5. **Rebuild, sign, verify** (done for the image edit; not yet run on a device): without `aapt2` (no Android build exists; see

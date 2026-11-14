@@ -44,6 +44,12 @@ fun ProjectScreen(
     openFile: suspend (String) -> FileView,
     thumbOfResource: suspend (ResourceEntry, Int) -> Bitmap?,
     thumbOfFile: suspend (String, Int) -> Bitmap?,
+    patches: Map<String, String>,
+    loadIndex: suspend () -> com.amandhakar.apkforge.code.CodeIndex?,
+    readSmali: suspend (com.amandhakar.apkforge.code.SmaliClass, Boolean) -> Pair<String?, String?>,
+    checkSmali: suspend (String, String) -> List<String>,
+    savePatch: suspend (String, String) -> List<String>,
+    removePatch: (String) -> Unit,
 ) {
     var tab by remember { mutableIntStateOf(0) }
     var viewer by remember { mutableStateOf<ViewerTarget?>(null) }
@@ -61,8 +67,8 @@ fun ProjectScreen(
             1 -> Files(details.inspection, thumbOfFile) { viewer = it }
             2 -> ManifestTab(details.manifest)
             3 -> ResourcesTab(details.resources, thumbOfResource) { viewer = it }
-            4 -> Later("DEX and code view", "Smali and Java-like views are planned for Phase 3. The Files tab lists the DEX files in this APK.")
-            else -> BuildTab(details, build, blockedReason, onCopyAsNew, onSuffix, onLabel, onPickImage, onUnstage, onBuild, onExportForged, onInstall, thumbOfResource) { viewer = it }
+            4 -> CodeTab(patches, loadIndex, readSmali, checkSmali, savePatch, removePatch)
+            else -> BuildTab(details, build, blockedReason, patches.size, onCopyAsNew, onSuffix, onLabel, onPickImage, onUnstage, onBuild, onExportForged, onInstall, thumbOfResource) { viewer = it }
         }
     }
 }

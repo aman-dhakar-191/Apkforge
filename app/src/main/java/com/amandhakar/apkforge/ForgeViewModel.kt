@@ -11,6 +11,10 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.amandhakar.apkforge.build.ApkChecks
+import com.amandhakar.apkforge.code.CodeIndex
+import com.amandhakar.apkforge.code.PatchDex
+import com.amandhakar.apkforge.code.SmaliClass
+import com.amandhakar.apkforge.code.SmaliService
 import com.amandhakar.apkforge.build.ArscPaths
 import com.amandhakar.apkforge.build.IconFinder
 import com.amandhakar.apkforge.build.IconPart
@@ -88,6 +92,8 @@ data class UiState(
     /** Set when an installed app's APK could not be copied: shows the explanation and the file-picker fallback. */
     val accessProblem: AccessProblem? = null,
     val build: BuildUi = BuildUi(),
+    /** Code patches of the open project: smali text by class. */
+    val patches: Map<String, String> = emptyMap(),
     /** SHA-256 of Apkforge's signing key, null when there is no key yet. */
     val keyFingerprint: String? = null,
 )
@@ -129,6 +135,8 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
     private val arscReader = ArscReader()
     private val dexScanner = DexClassScanner()
     private val splitReader = SplitSetReader()
+    private val smali = SmaliService()
+    private var codeIndexCache: Pair<String, CodeIndex>? = null
     private val keys = SigningKeys(File(app.filesDir, "keys"))
     private val rebuilder = ApkRebuilder()
     private val signing = ApkSigning()
@@ -223,6 +231,7 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                 busy = null,
                 details = details,
                 build = BuildUi(label = (details?.metadata?.label ?: details?.project?.displayName ?: "App").take(50) + " (copy)"),
+                patches = if (details != null) workspace.patches(id) else emptyMap(),
                 message = when {
                     details == null -> "That project could not be found."
                     notice != null -> notice
@@ -476,7 +485,8 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
         val ui = _state.value.build
         val staged = ui.staged
         val oldPackage = d.metadata?.packageName
-        if (staged.isEmpty() && !ui.copyAsNew) { setBuild { it.copy(problem = "There is nothing to change yet: pick an image, or install as a separate copy.") }; return }
+        val patches = _state.value.patches
+        if (staged.isEmpty() && !ui.copyAsNew && patches.isEmpty()) { setBuild { it.copy(problem = "There is nothing to change yet: pick an image, patch some code, or install as a separate copy.") }; return }
         buildBlockedReason(d, ui.copyAsNew)?.let { r -> setBuild { it.copy(problem = r) }; return }
         if (ui.copyAsNew) {
             val p = PackageClone.suffixProblem(ui.suffix) ?: PackageClone.labelProblem(ui.label)
@@ -508,13 +518,25 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                             is CloneResult.Ok -> { clone = c; replacements.putAll(c.replacements) }
                         }
                     }
-                    rebuilder.rebuild(apk, unsigned, replacements, renames)
+                    // code patches: a new first dex file, with the existing ones moved up by one
+                    var additions: Map<String, ByteArray> = emptyMap()
+                    var patchedClasses = 0
+                    if (patches.isNotEmpty()) {
+                        val (plan, why) = PatchDex.plan(entries.map { it.name })
+                        if (plan == null) return@withContext null to (why ?: "The code cannot be patched.")
+                        val a = smali.assemble(patches, patchApi())
+                        if (a.dex == null) return@withContext null to ("A code patch does not assemble: " + a.errors.firstOrNull())
+                        renames.putAll(plan.renames)
+                        additions = mapOf(plan.newDexName to a.dex)
+                        patchedClasses = patches.size
+                    }
+                    rebuilder.rebuild(apk, unsigned, replacements, renames, additions)
                     val hadKey = keys.exists()
                     val identity = keys.loadOrCreate()
                     signing.sign(unsigned, signed, identity, d.metadata?.minSdk ?: 23)
                     val report = checks.verify(signed, d.metadata?.minSdk)
                     log.event("build", "files" to edits.size, "verified" to report.verified, "v2" to report.v2, "v3" to report.v3, "bytes" to signed.length(), "copy" to ui.copyAsNew)
-                    val changes = EditPlan.summary(edits, entries) + (if (clone != null) listOf("Install as a separate app: ${oldPackage}.${ui.suffix}, named \"${ui.label}\"") else emptyList())
+                    val changes = EditPlan.summary(edits, entries) + (if (patchedClasses > 0) listOf("Patch the code of $patchedClasses class${if (patchedClasses == 1) "" else "es"} (a new first code file)") else emptyList()) + (if (clone != null) listOf("Install as a separate app: ${oldPackage}.${ui.suffix}, named \"${ui.label}\"") else emptyList())
                     BuildOutcome(signed, report, signed.length(), identity.fingerprint, changes, createdKey = !hadKey, newPackage = clone?.let { "$oldPackage.${ui.suffix}" }, notes = clone?.notes.orEmpty()) to null
                 } catch (e: Exception) {
                     signed.delete()
@@ -551,6 +573,58 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val err = withContext(Dispatchers.IO) { try { ForgeInstaller.start(getApplication(), outcome.apk); log.event("install_started"); null } catch (e: Exception) { e.message ?: e.javaClass.simpleName } }
             if (err != null) message("Could not start the install: $err")
+        }
+    }
+
+    // ---- the app's code: browse as smali, edit, patch
+    /** Every class of the open project's code, or null when it cannot be read. Cached per project. */
+    suspend fun codeIndex(): CodeIndex? = withContext(Dispatchers.IO) {
+        val d = _state.value.details ?: return@withContext null
+        codeIndexCache?.takeIf { it.first == d.project.id }?.let { return@withContext it.second }
+        try {
+            val apk = workspace.originalApk(d.project.id) ?: return@withContext null
+            val idx = smali.index(apk)
+            log.event("code_index", "classes" to idx.classes.size, "dex" to idx.dexEntries.size, "unreadable" to idx.unreadable.size)
+            codeIndexCache = d.project.id to idx
+            idx
+        } catch (e: Exception) { log.event("code_index_failed", "reason" to e.javaClass.simpleName); null } catch (e: OutOfMemoryError) { null }
+    }
+
+    /** The class as smali (text, error): the patched text when the class is patched, otherwise the original code. */
+    suspend fun smaliOf(cls: SmaliClass, original: Boolean = false): Pair<String?, String?> = withContext(Dispatchers.IO) {
+        val d = _state.value.details ?: return@withContext null to "No project is open."
+        if (!original) _state.value.patches[cls.descriptor]?.let { return@withContext it to null }
+        try {
+            val apk = workspace.originalApk(d.project.id) ?: return@withContext null to "The project's APK is missing."
+            smali.disassemble(apk, cls) to null
+        } catch (e: Exception) { null to (e.message ?: e.javaClass.simpleName) } catch (e: OutOfMemoryError) { null to "This class is too large to open on this phone." }
+    }
+
+    private fun patchApi(): Int = PatchDex.apiLevel(_state.value.details?.metadata?.minSdk)
+
+    /** Assembles [text] without saving it. Empty list = it assembles. */
+    suspend fun checkSmali(descriptor: String, text: String): List<String> = withContext(Dispatchers.IO) {
+        val r = smali.assemble(mapOf(descriptor to text), patchApi())
+        if (r.dex != null) emptyList() else r.errors
+    }
+
+    /** Saves the patch if it assembles. Returns the problems (empty = saved). */
+    suspend fun savePatch(descriptor: String, text: String): List<String> = withContext(Dispatchers.IO) {
+        val d = _state.value.details ?: return@withContext listOf("No project is open.")
+        if (text.length > Workspace.MAX_PATCH_CHARS) return@withContext listOf("The class is too large to patch (over ${Workspace.MAX_PATCH_CHARS / 1000} thousand characters).")
+        val r = smali.assemble(mapOf(descriptor to text), patchApi())
+        if (r.dex == null) { log.event("patch_rejected", "errors" to r.errors.size); return@withContext r.errors }
+        try { workspace.savePatch(d.project.id, descriptor, text) } catch (e: Exception) { return@withContext listOf(e.message ?: "Could not save the patch.") }
+        log.event("patch_saved", "classes" to workspace.patches(d.project.id).size)
+        _state.value = _state.value.copy(patches = workspace.patches(d.project.id), build = _state.value.build.copy(outcome = null))
+        emptyList()
+    }
+
+    fun removePatch(descriptor: String) {
+        val d = _state.value.details ?: return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { workspace.removePatch(d.project.id, descriptor); log.event("patch_removed") }
+            _state.value = _state.value.copy(patches = workspace.patches(d.project.id), build = _state.value.build.copy(outcome = null))
         }
     }
 
