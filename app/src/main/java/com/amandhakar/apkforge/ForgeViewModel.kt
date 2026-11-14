@@ -123,6 +123,9 @@ class StagedValue(val resource: String, val config: String, val item: String?, v
     val label: String get() = "$resource (${config}${item?.let { ", $it" } ?: ""})"
 }
 
+/** A planned change to one attribute of AndroidManifest.xml. */
+class StagedManifest(val change: com.amandhakar.apkforge.build.ManifestChange, val title: String, val label: String, val shown: String)
+
 data class BuildUi(
     /** Install the copy beside the original under a new package name (the default). Off = keep the name, which can only replace the original. */
     val copyAsNew: Boolean = true,
@@ -131,6 +134,8 @@ data class BuildUi(
     val staged: List<StagedImage> = emptyList(),
     /** Resource values (text, colours, numbers...) to change. */
     val values: List<StagedValue> = emptyList(),
+    /** AndroidManifest.xml attributes to change. */
+    val manifest: List<StagedManifest> = emptyList(),
     val running: String? = null,
     val outcome: BuildOutcome? = null,
     val problem: String? = null,
@@ -520,6 +525,21 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
         setBuild { b -> b.copy(values = b.values.filter { old -> changes.none { it.edit.offset == old.edit.offset } } + changes, outcome = null, problem = null) }
     }
 
+    suspend fun manifestSlots(): List<com.amandhakar.apkforge.build.ManifestSlot> = withContext(Dispatchers.IO) {
+        val d = _state.value.details ?: return@withContext emptyList()
+        try {
+            val apk = workspace.originalApk(d.project.id) ?: return@withContext emptyList()
+            java.util.zip.ZipFile(apk).use { z -> z.getEntry("AndroidManifest.xml")?.let { e -> com.amandhakar.apkforge.build.ManifestEdit.slots(z.getInputStream(e).use { it.readBytes() }) } ?: emptyList() }
+        } catch (e: Exception) { emptyList() }
+    }
+
+    fun stageManifest(changes: List<StagedManifest>) {
+        log.event("manifest_staged", "count" to changes.size)
+        setBuild { b -> b.copy(manifest = b.manifest.filter { old -> changes.none { it.change.key == old.change.key } } + changes, outcome = null, problem = null) }
+    }
+
+    fun unstageManifest(key: String) { setBuild { b -> b.copy(manifest = b.manifest.filter { it.change.key != key }, outcome = null) } }
+
     fun unstageValue(offset: Int) { setBuild { b -> b.copy(values = b.values.filter { it.edit.offset != offset }, outcome = null) } }
 
     fun unstage(resource: String) { setBuild { b -> b.copy(staged = b.staged.filter { it.resource != resource }, outcome = null) } }
@@ -531,7 +551,8 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
         val oldPackage = d.metadata?.packageName
         val patches = _state.value.patches
         val values = ui.values
-        if (staged.isEmpty() && values.isEmpty() && !ui.copyAsNew && patches.isEmpty()) { setBuild { it.copy(problem = "There is nothing to change yet: pick an image, change a resource, patch some code, or install as a separate copy.") }; return }
+        val manifestEdits = ui.manifest
+        if (staged.isEmpty() && values.isEmpty() && manifestEdits.isEmpty() && !ui.copyAsNew && patches.isEmpty()) { setBuild { it.copy(problem = "There is nothing to change yet: pick an image, change a resource or manifest value, patch some code, or install as a separate copy.") }; return }
         buildBlockedReason(d, ui.copyAsNew)?.let { r -> setBuild { it.copy(problem = r) }; return }
         if (ui.copyAsNew) {
             val p = PackageClone.suffixProblem(ui.suffix) ?: PackageClone.labelProblem(ui.label)
@@ -559,9 +580,15 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                         patchedArsc = arsc
                     }
                     if (patchedArsc != null) replacements["resources.arsc"] = patchedArsc
+                    var patchedManifest: ByteArray? = null
+                    if (manifestEdits.isNotEmpty()) {
+                        val original = java.util.zip.ZipFile(apk).use { z -> (z.getEntry("AndroidManifest.xml") ?: return@withContext null to "The APK has no manifest.").let { e -> z.getInputStream(e).use { it.readBytes() } } }
+                        patchedManifest = com.amandhakar.apkforge.build.ManifestEdit.apply(original, manifestEdits.map { it.change })
+                        replacements["AndroidManifest.xml"] = patchedManifest
+                    }
                     var clone: CloneResult.Ok? = null
                     if (ui.copyAsNew) {
-                        when (val c = PackageClone.prepare(apk, CloneSpec(oldPackage!!, ui.suffix, ui.label), arscOverride = patchedArsc)) {
+                        when (val c = PackageClone.prepare(apk, CloneSpec(oldPackage!!, ui.suffix, ui.label), arscOverride = patchedArsc, manifestOverride = patchedManifest)) {
                             is CloneResult.Unsupported -> return@withContext null to c.reason
                             is CloneResult.Ok -> { clone = c; replacements.putAll(c.replacements) }
                         }
@@ -583,8 +610,8 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                     val identity = keys.loadOrCreate()
                     signing.sign(unsigned, signed, identity, d.metadata?.minSdk ?: 23)
                     val report = checks.verify(signed, d.metadata?.minSdk)
-                    log.event("build", "files" to edits.size, "verified" to report.verified, "v2" to report.v2, "v3" to report.v3, "bytes" to signed.length(), "copy" to ui.copyAsNew, "values" to values.size)
-                    val changes = EditPlan.summary(edits, entries) + values.map { "Change ${it.label}: ${it.shown.take(60)}" } + (if (patchedClasses > 0) listOf("Patch the code of $patchedClasses class${if (patchedClasses == 1) "" else "es"} (a new first code file)") else emptyList()) + (if (clone != null) listOf("Install as a separate app: ${oldPackage}.${ui.suffix}, named \"${ui.label}\"") else emptyList())
+                    log.event("build", "files" to edits.size, "verified" to report.verified, "v2" to report.v2, "v3" to report.v3, "bytes" to signed.length(), "copy" to ui.copyAsNew, "values" to values.size, "manifest" to manifestEdits.size)
+                    val changes = EditPlan.summary(edits, entries) + values.map { "Change ${it.label}: ${it.shown.take(60)}" } + manifestEdits.map { "Manifest ${it.title} ${it.label}: ${it.shown.take(60)}" } + (if (patchedClasses > 0) listOf("Patch the code of $patchedClasses class${if (patchedClasses == 1) "" else "es"} (a new first code file)") else emptyList()) + (if (clone != null) listOf("Install as a separate app: ${oldPackage}.${ui.suffix}, named \"${ui.label}\"") else emptyList())
                     BuildOutcome(signed, report, signed.length(), identity.fingerprint, changes, createdKey = !hadKey, newPackage = clone?.let { "$oldPackage.${ui.suffix}" }, notes = clone?.notes.orEmpty()) to null
                 } catch (e: Exception) {
                     signed.delete()

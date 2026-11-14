@@ -55,11 +55,16 @@ fun ProjectScreen(
     resourceName: (Int) -> String?,
     onStageValues: (List<com.amandhakar.apkforge.StagedValue>) -> Unit,
     onUnstageValue: (Int) -> Unit,
+    loadManifestSlots: suspend () -> List<com.amandhakar.apkforge.build.ManifestSlot>,
+    onStageManifest: (List<com.amandhakar.apkforge.StagedManifest>) -> Unit,
+    onUnstageManifest: (String) -> Unit,
 ) {
     var tab by remember { mutableIntStateOf(0) }
     var viewer by remember { mutableStateOf<ViewerTarget?>(null) }
     var editing by remember { mutableStateOf<ResourceEntry?>(null) }
+    var editingManifest by remember { mutableStateOf(false) }
     viewer?.let { FileViewerScreen(it, openFile) { viewer = null }; return }
+    if (editingManifest) { ManifestEditScreen(build.manifest, loadManifestSlots, onStageManifest, onUnstageManifest) { editingManifest = false }; return }
     editing?.let { ResourceEditScreen(it, build.values, loadValueSlots, resourceId, resourceName, onStageValues) { editing = null }; return }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -72,22 +77,23 @@ fun ProjectScreen(
         when (tab) {
             0 -> Overview(details, onExport, onDelete)
             1 -> Files(details.inspection, thumbOfFile) { viewer = it }
-            2 -> ManifestTab(details.manifest)
+            2 -> ManifestTab(details.manifest, build.manifest.size, blockedReason == null) { editingManifest = true }
             3 -> ResourcesTab(details.resources, thumbOfResource, build.values.map { it.resource }.toSet(), { editing = it }) { viewer = it }
             4 -> CodeTab(patches, loadIndex, readSmali, checkSmali, savePatch, removePatch)
-            else -> BuildTab(details, build, blockedReason, patches.size, onUnstageValue, onCopyAsNew, onSuffix, onLabel, onPickImage, onUnstage, onBuild, onExportForged, onInstall, thumbOfResource) { viewer = it }
+            else -> BuildTab(details, build, blockedReason, patches.size, onUnstageValue, onUnstageManifest, onCopyAsNew, onSuffix, onLabel, onPickImage, onUnstage, onBuild, onExportForged, onInstall, thumbOfResource) { viewer = it }
         }
     }
 }
 
 @Composable
-private fun ManifestTab(m: ManifestResult?) {
+private fun ManifestTab(m: ManifestResult?, planned: Int, canEdit: Boolean, onEdit: () -> Unit) {
     when (m) {
         null -> Later("No manifest", "This file has no AndroidManifest.xml.")
         is ManifestResult.Failed -> Later("Manifest not readable", m.reason)
         is ManifestResult.Ok -> {
             val lines = remember(m) { m.xml.lines() }
             Column(Modifier.fillMaxSize()) {
+                if (canEdit) OutlinedButton(onEdit, Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { Text(if (planned > 0) "Edit values ($planned planned)" else "Edit values") }
                 Text(
                     "Decoded from the binary manifest. References are shown by resource name (for example @string/app_name); a number like @0x7f090001 means the name was not found in resources.arsc.",
                     Modifier.padding(horizontal = 16.dp, vertical = 8.dp),

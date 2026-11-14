@@ -108,6 +108,9 @@ class MainActivity : ComponentActivity() {
                         resourceName = vm::resourceName,
                         onStageValues = vm::stageValues,
                         onUnstageValue = vm::unstageValue,
+                        loadManifestSlots = vm::manifestSlots,
+                        onStageManifest = vm::stageManifest,
+                        onUnstageManifest = vm::unstageManifest,
                     )
                     showInstalled -> InstalledAppsScreen(
                         apps = state.installed,
