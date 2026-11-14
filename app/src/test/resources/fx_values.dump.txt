@@ -1,0 +1,56 @@
+Binary APK
+Package name=com.example.valuesfx id=7f
+  type array id=01 entryCount=1
+    resource 0x7f010000 array/colors_list
+      () (array) size=3
+        ["red", "blue", "green"]
+  type bool id=02 entryCount=1
+    resource 0x7f020000 bool/is_debug
+      () true
+  type color id=03 entryCount=2
+    resource 0x7f030000 color/brand
+      () #ff2b3a55
+      (night) #ff101820
+      (hi) #ff00aa00
+    resource 0x7f030001 color/half_alpha
+      () #802b3a55
+  type dimen id=04 entryCount=4
+    resource 0x7f040000 dimen/pad
+      () 16.000000dp
+    resource 0x7f040001 dimen/ratio
+      () 0.25
+    resource 0x7f040002 dimen/text_size
+      () 14.000000sp
+    resource 0x7f040003 dimen/thin
+      () 0.500000dp
+  type fraction id=05 entryCount=1
+    resource 0x7f050000 fraction/half
+      () 0.500000%
+  type integer id=06 entryCount=2
+    resource 0x7f060000 integer/max_count
+      () 42
+    resource 0x7f060001 integer/negative
+      () -7
+  type plurals id=07 entryCount=1
+    resource 0x7f070000 plurals/items
+      () (plurals) size=2
+        one="%d item"
+        other="%d items"
+  type string id=08 entryCount=5
+    resource 0x7f080000 string/alias
+      () @string/app_name
+    resource 0x7f080001 string/app_name
+      () "Values Fixture"
+      (hi) "मान फ़िक्स्चर"
+      (de-rCH) "Werte Fixture CH"
+    resource 0x7f080002 string/empty
+      () ""
+    resource 0x7f080003 string/greeting
+      () "Hello %1$s, you have %2$d messages"
+      (hi) "नमस्ते %1$s"
+    resource 0x7f080004 string/styled
+      () (styled string) "Hello bold and italic" b:6,9 i:15,20
+  type style id=09 entryCount=1
+    resource 0x7f090000 style/AppTheme
+      () (style) size=1 parent=0x01030237
+        0x01010054=@color/brand

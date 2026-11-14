@@ -11,6 +11,9 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.amandhakar.apkforge.build.ApkChecks
+import com.amandhakar.apkforge.build.ArscEditor
+import com.amandhakar.apkforge.build.ValueEdit
+import com.amandhakar.apkforge.build.ValueSlot
 import com.amandhakar.apkforge.code.CodeIndex
 import com.amandhakar.apkforge.code.PatchDex
 import com.amandhakar.apkforge.code.SmaliClass
@@ -115,12 +118,19 @@ class BuildOutcome(
     val newPackage: String? = null, val notes: List<String> = emptyList(),
 )
 
+/** A change to one resource value, ready to be built into the copy. */
+class StagedValue(val resource: String, val config: String, val item: String?, val edit: ValueEdit, val shown: String) {
+    val label: String get() = "$resource (${config}${item?.let { ", $it" } ?: ""})"
+}
+
 data class BuildUi(
     /** Install the copy beside the original under a new package name (the default). Off = keep the name, which can only replace the original. */
     val copyAsNew: Boolean = true,
     val suffix: String = "forge",
     val label: String = "",
     val staged: List<StagedImage> = emptyList(),
+    /** Resource values (text, colours, numbers...) to change. */
+    val values: List<StagedValue> = emptyList(),
     val running: String? = null,
     val outcome: BuildOutcome? = null,
     val problem: String? = null,
@@ -478,6 +488,40 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
     fun setSuffix(s: String) { setBuild { it.copy(suffix = s.take(24), problem = null, outcome = null) } }
     fun setLabel(s: String) { setBuild { it.copy(label = s.take(60), problem = null, outcome = null) } }
 
+    // ---- editing resource values (text, colours, numbers...)
+    private var arscCache: Pair<String, ByteArray>? = null
+
+    private fun arscOf(projectId: String, apk: File): ByteArray {
+        arscCache?.takeIf { it.first == projectId }?.let { return it.second }
+        val bytes = java.util.zip.ZipFile(apk).use { z ->
+            val e = z.getEntry("resources.arsc") ?: error("The APK has no resource table")
+            z.getInputStream(e).use { it.readUpTo(96 * 1024 * 1024) }
+        }
+        arscCache = projectId to bytes
+        return bytes
+    }
+
+    /** Every value of the resource, one per language or configuration (and per array or plural item). */
+    suspend fun valueSlots(entry: ResourceEntry): List<ValueSlot> = withContext(Dispatchers.IO) {
+        val d = _state.value.details ?: return@withContext emptyList()
+        try { ArscEditor.slots(arscOf(d.project.id, workspace.originalApk(d.project.id) ?: return@withContext emptyList()), entry.id) }
+        catch (e: Exception) { emptyList() } catch (e: OutOfMemoryError) { emptyList() }
+    }
+
+    /** "type/name" (as in @string/app_name) to a resource id, or null. */
+    fun resourceId(typeSlashName: String): Int? =
+        (_state.value.details?.resources as? ResourceResult.Ok)?.table?.entries?.values?.firstOrNull { "${it.type}/${it.name}" == typeSlashName }?.id
+
+    fun resourceName(id: Int): String? = (_state.value.details?.resources as? ResourceResult.Ok)?.table?.nameOf(id)
+
+    /** Adds or replaces the planned changes for the given values (one per value). */
+    fun stageValues(changes: List<StagedValue>) {
+        log.event("values_staged", "count" to changes.size)
+        setBuild { b -> b.copy(values = b.values.filter { old -> changes.none { it.edit.offset == old.edit.offset } } + changes, outcome = null, problem = null) }
+    }
+
+    fun unstageValue(offset: Int) { setBuild { b -> b.copy(values = b.values.filter { it.edit.offset != offset }, outcome = null) } }
+
     fun unstage(resource: String) { setBuild { b -> b.copy(staged = b.staged.filter { it.resource != resource }, outcome = null) } }
 
     fun buildCopy() {
@@ -486,7 +530,8 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
         val staged = ui.staged
         val oldPackage = d.metadata?.packageName
         val patches = _state.value.patches
-        if (staged.isEmpty() && !ui.copyAsNew && patches.isEmpty()) { setBuild { it.copy(problem = "There is nothing to change yet: pick an image, patch some code, or install as a separate copy.") }; return }
+        val values = ui.values
+        if (staged.isEmpty() && values.isEmpty() && !ui.copyAsNew && patches.isEmpty()) { setBuild { it.copy(problem = "There is nothing to change yet: pick an image, change a resource, patch some code, or install as a separate copy.") }; return }
         buildBlockedReason(d, ui.copyAsNew)?.let { r -> setBuild { it.copy(problem = r) }; return }
         if (ui.copyAsNew) {
             val p = PackageClone.suffixProblem(ui.suffix) ?: PackageClone.labelProblem(ui.label)
@@ -505,11 +550,14 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                     for (e in edits) EditPlan.problem(e, entries)?.let { return@withContext null to it }
                     val replacements = LinkedHashMap<String, ByteArray>()
                     edits.forEach { replacements[it.entryName] = if (it is ApkEdit.ReplaceFile) it.bytes else (it as ApkEdit.ReplaceDrawingWithPicture).bytes }
-                    // the resource table must point at the new ".png" names (patched in place), before anything else edits it
-                    val patchedArsc = if (renames.isEmpty()) null else ArscPaths.xmlToPng(
-                        java.util.zip.ZipFile(apk).use { z -> z.getInputStream(z.getEntry("resources.arsc") ?: error("The APK has no resource table")).use { it.readUpTo(96 * 1024 * 1024) } },
-                        renames.keys,
-                    )
+                    // the resource table: value edits first (they aim at positions in the original), then the new ".png" names
+                    var patchedArsc: ByteArray? = null
+                    if (values.isNotEmpty() || renames.isNotEmpty()) {
+                        var arsc = arscOf(d.project.id, apk)
+                        if (values.isNotEmpty()) arsc = ArscEditor.apply(arsc, values.map { it.edit })
+                        if (renames.isNotEmpty()) arsc = ArscPaths.xmlToPng(arsc, renames.keys)
+                        patchedArsc = arsc
+                    }
                     if (patchedArsc != null) replacements["resources.arsc"] = patchedArsc
                     var clone: CloneResult.Ok? = null
                     if (ui.copyAsNew) {
@@ -535,8 +583,8 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                     val identity = keys.loadOrCreate()
                     signing.sign(unsigned, signed, identity, d.metadata?.minSdk ?: 23)
                     val report = checks.verify(signed, d.metadata?.minSdk)
-                    log.event("build", "files" to edits.size, "verified" to report.verified, "v2" to report.v2, "v3" to report.v3, "bytes" to signed.length(), "copy" to ui.copyAsNew)
-                    val changes = EditPlan.summary(edits, entries) + (if (patchedClasses > 0) listOf("Patch the code of $patchedClasses class${if (patchedClasses == 1) "" else "es"} (a new first code file)") else emptyList()) + (if (clone != null) listOf("Install as a separate app: ${oldPackage}.${ui.suffix}, named \"${ui.label}\"") else emptyList())
+                    log.event("build", "files" to edits.size, "verified" to report.verified, "v2" to report.v2, "v3" to report.v3, "bytes" to signed.length(), "copy" to ui.copyAsNew, "values" to values.size)
+                    val changes = EditPlan.summary(edits, entries) + values.map { "Change ${it.label}: ${it.shown.take(60)}" } + (if (patchedClasses > 0) listOf("Patch the code of $patchedClasses class${if (patchedClasses == 1) "" else "es"} (a new first code file)") else emptyList()) + (if (clone != null) listOf("Install as a separate app: ${oldPackage}.${ui.suffix}, named \"${ui.label}\"") else emptyList())
                     BuildOutcome(signed, report, signed.length(), identity.fingerprint, changes, createdKey = !hadKey, newPackage = clone?.let { "$oldPackage.${ui.suffix}" }, notes = clone?.notes.orEmpty()) to null
                 } catch (e: Exception) {
                     signed.delete()
