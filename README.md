@@ -94,6 +94,12 @@ Works now:
   test file and on Apkforge's own 7 MB APK: only the edited lines differ; `apksigner` and `zipalign` pass.
   **Not built: adding brand-new resources.** Existing code cannot refer to a new ID unless its smali is also
   edited, and adding an entry means rewriting the key pool and every configuration's entry table.
+- **Edit manifest values.** In the Manifest tab, **Edit values** lists every attribute of
+  `AndroidManifest.xml` (searchable). Text, whole numbers and on/off flags can be changed (for example
+  `versionName`, `versionCode`, `allowBackup`); references and the package name cannot (the package name is
+  changed with "Install as a separate app"). New text is appended to the manifest's string table and nothing else
+  moves. Checked with `aapt2 dump xmltree` on Apkforge's own APK: only the three edited attributes differ.
+  There are no ready-made patches; a wrong value can stop the app from installing or opening.
 - **Build tab: replace images.** Pick an image resource (every screen-density file it uses is found
   from `resources.arsc`), pick a picture, and Apkforge converts it to the same format and pixel size
   (centre-cropped). A summary of the planned changes is shown, then **Build, sign and check**

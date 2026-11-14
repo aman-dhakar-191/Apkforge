@@ -7,7 +7,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /** [value] is the text of a string attribute; [reference] the resource id of a `@resource` attribute (null otherwise). */
-class AxmlAttr(val namespace: String?, val name: String, val value: String?, internal val offset: Int, val reference: Int? = null)
+class AxmlAttr(val namespace: String?, val name: String, val value: String?, internal val offset: Int, val reference: Int? = null, val dataType: Int = 0x03, val data: Int = 0)
 class AxmlElement(val index: Int, val name: String, val depth: Int, val parent: Int, val attrs: List<AxmlAttr>)
 
 /** A parsed compiled-XML file. Keep it to pass back to [AxmlEditor.apply]. */
@@ -22,7 +22,12 @@ class AxmlDoc internal constructor(
 )
 
 /** Change an attribute of the [element]-th start tag (0-based, in file order) to the string [newValue]. */
-class AttrPatch(val element: Int, val namespace: String?, val attribute: String, val newValue: String)
+class AttrPatch(val element: Int, val namespace: String?, val attribute: String, val newValue: String) {
+    /** A number or flag instead of text: [dataType] 0x10 (decimal), 0x11 (hex) or 0x12 (true/false), with its [data]. */
+    constructor(element: Int, namespace: String?, attribute: String, dataType: Int, data: Int) : this(element, namespace, attribute, "") { typed = dataType; typedData = data }
+    internal var typed: Int? = null
+    internal var typedData: Int = 0
+}
 
 /**
  * Changes attribute values in a compiled ("binary") XML file such as AndroidManifest.xml, and nothing else.
@@ -77,6 +82,7 @@ class AxmlEditor(private val maxElements: Int = 100_000) {
                             value = if (dataType == 0x03) s.getOrNull(data) else null,
                             offset = a,
                             reference = if (dataType == 0x01 && data != 0) data else null,
+                            dataType = dataType, data = data,
                         )
                     }
                     val index = elements.size
@@ -100,6 +106,11 @@ class AxmlEditor(private val maxElements: Int = 100_000) {
             val el = doc.elements.getOrNull(p.element) ?: throw AxmlException("no such element ${p.element}")
             val attr = el.attrs.firstOrNull { it.name == p.attribute && it.namespace == p.namespace }
                 ?: throw AxmlException("<${el.name}> has no attribute ${p.attribute}")
+            p.typed?.let { t ->
+                require(t == 0x10 || t == 0x11 || t == 0x12) { "unsupported manifest value type" }
+                b.putInt(attr.offset + 8, -1); b.put(attr.offset + 15, t.toByte()); b.putInt(attr.offset + 16, p.typedData)
+                continue
+            }
             val i = index.getOrPut(p.newValue) { strings.add(p.newValue); strings.size - 1 }
             b.putInt(attr.offset + 8, i)          // the raw value
             b.put(attr.offset + 15, 0x03)         // typed value: a string...
