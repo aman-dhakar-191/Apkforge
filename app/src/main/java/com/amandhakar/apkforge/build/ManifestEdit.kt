@@ -5,15 +5,15 @@ import com.amandhakar.apkforge.inspect.AxmlException
 /** One attribute of the manifest that can be shown and, if [editable], changed. [element] is the tag's position in the file. */
 class ManifestSlot(
     val element: Int, val tag: String, val title: String, val namespace: String?, val name: String,
-    val dataType: Int, val data: Int, val text: String?, val editable: Boolean,
+    val dataType: Int, val data: Int, val text: String?, val editable: Boolean, val depth: Int = 0, val path: String = "AndroidManifest.xml",
 ) {
-    val key get() = "$element/${namespace.orEmpty()}/$name"
+    val key get() = "$path|$element/${namespace.orEmpty()}/$name"
     val label get() = (if (namespace != null) "android:" else "") + name
 }
 
 /** A planned manifest change: the new text, number or flag of one attribute. */
-class ManifestChange(val element: Int, val namespace: String?, val name: String, val dataType: Int, val data: Int, val text: String?) {
-    val key get() = "$element/${namespace.orEmpty()}/$name"
+class ManifestChange(val element: Int, val namespace: String?, val name: String, val dataType: Int, val data: Int, val text: String?, val path: String = "AndroidManifest.xml") {
+    val key get() = "$path|$element/${namespace.orEmpty()}/$name"
     fun patch() = if (text != null) AttrPatch(element, namespace, name, text) else AttrPatch(element, namespace, name, dataType, data)
 }
 

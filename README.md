@@ -108,6 +108,15 @@ Works now:
   was opened. Edits go into the base: pictures that live only in a density or language part cannot be replaced yet.
   Checked: a real aapt2-built part comes out with the renamed package, the new versionCode and a renamed resource
   table, and passes `zipalign`. **Not yet confirmed on a phone: installing a whole set.**
+- **Edit layouts and other XML files.** Open any compiled XML file under `res/` (a layout, menu, vector drawing...) from
+  the Resources or Files tab and tap **Edit values**. Every view is listed with its attributes; text, colours, sizes,
+  numbers, on/off flags and references can be changed (a reference can also be replaced by plain text). Only values that
+  are already there change: views and attributes cannot be added or removed yet, so the structure stays what the app
+  expects. Checked on an aapt2-built layout: only the edited attributes differ.
+- **Fix: content-provider authorities given as resources.** A copy installed beside the original failed with
+  `INSTALL_FAILED_CONFLICTING_PROVIDER` when the app's provider authority was a string resource (`@string/...`) instead
+  of text in the manifest (seen on a shopping app). The text is now renamed in the resource table, in every language.
+  Checked with `aapt2`: the renamed authority appears in the default and Hindi strings.
 - **Edit manifest values.** In the Manifest tab, **Edit values** lists every attribute of
   `AndroidManifest.xml` (searchable). Text, whole numbers and on/off flags can be changed (for example
   `versionName`, `versionCode`, `allowBackup`); references and the package name cannot (the package name is

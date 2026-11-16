@@ -1,5 +1,6 @@
 package com.amandhakar.apkforge.ui
 
+import com.amandhakar.apkforge.build.XmlEdit
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -58,13 +59,24 @@ fun ProjectScreen(
     loadManifestSlots: suspend () -> List<com.amandhakar.apkforge.build.ManifestSlot>,
     onStageManifest: (List<com.amandhakar.apkforge.StagedManifest>) -> Unit,
     onUnstageManifest: (String) -> Unit,
+    loadXmlSlots: suspend (String) -> List<com.amandhakar.apkforge.build.ManifestSlot>,
 ) {
     var tab by remember { mutableIntStateOf(0) }
     var viewer by remember { mutableStateOf<ViewerTarget?>(null) }
     var editing by remember { mutableStateOf<ResourceEntry?>(null) }
     var editingManifest by remember { mutableStateOf(false) }
-    viewer?.let { FileViewerScreen(it, openFile) { viewer = null }; return }
-    if (editingManifest) { ManifestEditScreen(build.manifest, loadManifestSlots, onStageManifest, onUnstageManifest) { editingManifest = false }; return }
+    var editingXml by remember { mutableStateOf<String?>(null) }
+    editingXml?.let { path ->
+        val here = build.manifest.filter { it.change.path == path }
+        ManifestEditScreen(
+            staged = here, heading = path.substringAfterLast('/'), intro = "Tap a value to change it, for example text, colours and sizes. Changes are applied to the copy when you build; the original is never changed. Some numbers are codes: for sizes -1 means match_parent and -2 wrap_content, and visibility is 0 visible, 4 invisible, 8 gone. Only values that are already there can change; views cannot be added or removed yet.",
+            showOf = { XmlEdit.show(it, resourceName) }, parseOf = { s, t -> XmlEdit.parse(s, t, resourceId) },
+            loadSlots = { loadXmlSlots(path) }, onStage = onStageManifest, onUnstage = onUnstageManifest, onBack = { editingXml = null }, key = path,
+        )
+        return
+    }
+    viewer?.let { FileViewerScreen(it, openFile, { editingXml = it }) { viewer = null }; return }
+    if (editingManifest) { ManifestEditScreen(build.manifest.filter { it.change.path == "AndroidManifest.xml" }, loadSlots = loadManifestSlots, onStage = onStageManifest, onUnstage = onUnstageManifest, onBack = { editingManifest = false }); return }
     editing?.let { ResourceEditScreen(it, build.values, loadValueSlots, resourceId, resourceName, onStageValues) { editing = null }; return }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {

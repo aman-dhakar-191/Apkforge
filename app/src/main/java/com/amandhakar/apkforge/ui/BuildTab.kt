@@ -212,12 +212,12 @@ private fun BuildBar(
             }
             b.manifest.forEach { m ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Manifest ${m.label} = ${m.shown.take(40)}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    Text((if (m.change.path == "AndroidManifest.xml") "Manifest " else m.change.path.substringAfterLast('/') + " ") + "${m.title.trim().substringBefore("  ")} ${m.label} = ${m.shown.take(40)}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
                     TextButton({ onUnstageManifest(m.change.key) }, enabled = b.running == null) { Text("Remove") }
                 }
             }
             if (patchCount > 0) Text("• Patch the code of $patchCount class${if (patchCount == 1) "" else "es"} (Code tab)", style = MaterialTheme.typography.bodySmall)
-            if (!b.copyAsNew && b.staged.isEmpty() && b.values.isEmpty() && b.manifest.isEmpty() && patchCount == 0) Text("Nothing yet. Pick an image above, change a resource in the Resources tab, edit the Manifest, or patch some code in the Code tab.", style = MaterialTheme.typography.bodySmall)
+            if (!b.copyAsNew && b.staged.isEmpty() && b.values.isEmpty() && b.manifest.isEmpty() && patchCount == 0) Text("Nothing yet. Pick an image above, change a resource in the Resources tab, edit the Manifest or a layout, or patch some code in the Code tab.", style = MaterialTheme.typography.bodySmall)
             Button(onBuild, Modifier.fillMaxWidth(), enabled = b.running == null && (b.staged.isNotEmpty() || b.values.isNotEmpty() || b.manifest.isNotEmpty() || b.copyAsNew || patchCount > 0)) { Text("Build, sign and check") }
             b.running?.let { Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp); Spacer(Modifier.width(10.dp)); Text(it, style = MaterialTheme.typography.bodySmall) } }
             b.problem?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }

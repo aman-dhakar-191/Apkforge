@@ -81,6 +81,23 @@ object PackageClone {
         fun permission(v: String): String? = if (v in definedPermissions) (swap(v) ?: "$v.${spec.suffix}") else null
 
         val launchers = launcherActivities(doc)
+        // An authority given as a resource (android:authorities="@string/x") has its text in resources.arsc, so the text is
+        // renamed there (every language). Left alone, the copy would claim the original's authority and Android refuses it.
+        var workArsc = arsc
+        val authorityEdits = LinkedHashMap<Int, SetText>()
+        for (el in doc.elements) if (el.name == "provider") for (a in el.attrs) {
+            if (a.name != "authorities" || a.namespace == null || a.value != null) continue
+            val id = a.reference ?: return CloneResult.Unsupported("A content provider's authority has a kind of value Apkforge cannot rename, so a copy would clash with the original.")
+            val slots = try { if (arsc == null) null else ArscEditor.slots(arsc, id).filter { it.dataType == 0x03 && it.text != null } } catch (e: Exception) { null }
+            if (slots.isNullOrEmpty()) return CloneResult.Unsupported("A content provider's authority is a resource (0x${Integer.toHexString(id)}) that Apkforge could not read, so a copy would clash with the original.")
+            for (s in slots) authorityEdits.getOrPut(s.offset) {
+                val parts = s.text!!.split(';').map { it.trim() }.filter { it.isNotEmpty() }
+                val out = parts.map { swap(it) ?: "$it.${spec.suffix}".also { n -> notes += "Provider authority \"$it\" is not under the app's package name; renamed to \"$n\" so two copies can coexist. Code that uses the old name directly will not find it." } }
+                renamed += "provider authority (resource): ${s.text} → ${out.joinToString(";")}"
+                SetText(s.offset, out.joinToString(";"))
+            }
+        }
+        if (authorityEdits.isNotEmpty()) workArsc = try { ArscEditor.apply(arsc!!, authorityEdits.values.toList()) } catch (e: Exception) { return CloneResult.Unsupported("The resource table could not be rewritten: ${e.message}") }
         for (el in doc.elements) for (a in el.attrs) {
             val v = a.value ?: continue
             val isAndroid = a.namespace != null
@@ -112,9 +129,9 @@ object PackageClone {
 
         val out = mutableMapOf<String, ByteArray>()
         try { out["AndroidManifest.xml"] = editor.apply(manifest, doc, patches) } catch (e: AxmlException) { return CloneResult.Unsupported("The manifest could not be rewritten: ${e.message}") }
-        if (arsc != null) {
-            val n = try { ArscPackage.rename(arsc, old, new) } catch (e: AxmlException) { return CloneResult.Unsupported("The resource table could not be rewritten: ${e.message}") }
-            if (n == null) notes += "The resource table has no package named $old; it was left alone."
+        if (workArsc != null) {
+            val n = try { ArscPackage.rename(workArsc, old, new) } catch (e: AxmlException) { return CloneResult.Unsupported("The resource table could not be rewritten: ${e.message}") }
+            if (n == null) { notes += "The resource table has no package named $old; its package name was left alone."; if (workArsc !== arsc) out["resources.arsc"] = workArsc }
             else { out["resources.arsc"] = n; renamed += "resources.arsc package name → $new" }
         }
         notes += "The copy is a separate app with its own data: you will have to sign in again. Anything tied to the original (Google sign-in, push notifications, licence checks) usually stops working."

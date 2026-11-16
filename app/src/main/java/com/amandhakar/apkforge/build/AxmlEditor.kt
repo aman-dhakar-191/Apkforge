@@ -23,7 +23,7 @@ class AxmlDoc internal constructor(
 
 /** Change an attribute of the [element]-th start tag (0-based, in file order) to the string [newValue]. */
 class AttrPatch(val element: Int, val namespace: String?, val attribute: String, val newValue: String) {
-    /** A number or flag instead of text: [dataType] 0x10 (decimal), 0x11 (hex) or 0x12 (true/false), with its [data]. */
+    /** A reference, number, colour, size or flag instead of text: a simple [dataType] (0x01, 0x04-0x06, 0x10-0x12, 0x1c-0x1f) with its [data]. */
     constructor(element: Int, namespace: String?, attribute: String, dataType: Int, data: Int) : this(element, namespace, attribute, "") { typed = dataType; typedData = data }
     internal var typed: Int? = null
     internal var typedData: Int = 0
@@ -107,7 +107,7 @@ class AxmlEditor(private val maxElements: Int = 100_000) {
             val attr = el.attrs.firstOrNull { it.name == p.attribute && it.namespace == p.namespace }
                 ?: throw AxmlException("<${el.name}> has no attribute ${p.attribute}")
             p.typed?.let { t ->
-                require(t == 0x10 || t == 0x11 || t == 0x12) { "unsupported manifest value type" }
+                require(t in TYPED_OK) { "unsupported value type" }
                 b.putInt(attr.offset + 8, -1); b.put(attr.offset + 15, t.toByte()); b.putInt(attr.offset + 16, p.typedData)
                 continue
             }
@@ -126,6 +126,8 @@ class AxmlEditor(private val maxElements: Int = 100_000) {
         ByteBuffer.wrap(result).order(ByteOrder.LITTLE_ENDIAN).putInt(4, result.size)
         return result
     }
+
+    private companion object { val TYPED_OK = setOf(0x01, 0x04, 0x05, 0x06, 0x10, 0x11, 0x12, 0x1c, 0x1d, 0x1e, 0x1f) }
 
     private fun encodePool(strings: List<String>, utf8: Boolean, flags: Int): ByteArray {
         val data = ByteArrayOutputStream()

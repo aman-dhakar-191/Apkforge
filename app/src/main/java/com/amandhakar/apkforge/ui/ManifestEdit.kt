@@ -21,13 +21,18 @@ import com.amandhakar.apkforge.build.ManifestSlot
 @Composable
 fun ManifestEditScreen(
     staged: List<StagedManifest>,
+    heading: String = "Manifest values",
+    intro: String = "Tap a value to change it. Changes are applied to the copy when you build; the original is never changed. The package name is changed with \"Install as a separate app\" in the Build tab. A wrong value can stop the app from installing or opening.",
+    showOf: (ManifestSlot) -> String = ManifestEdit::show,
+    parseOf: (ManifestSlot, String) -> ManifestParsed = ManifestEdit::parse,
     loadSlots: suspend () -> List<ManifestSlot>,
     onStage: (List<StagedManifest>) -> Unit,
     onUnstage: (String) -> Unit,
     onBack: () -> Unit,
+    key: Any? = Unit,
 ) {
     BackHandler(onBack = onBack)
-    val slots by produceState<List<ManifestSlot>?>(null) { value = loadSlots() }
+    val slots by produceState<List<ManifestSlot>?>(null, key) { value = null; value = loadSlots() }
     var query by remember { mutableStateOf("") }
     var onlyEditable by remember { mutableStateOf(true) }
     var editing by remember { mutableStateOf<ManifestSlot?>(null) }
@@ -35,10 +40,10 @@ fun ManifestEditScreen(
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onBack) { Text("← Back") }
-            Text("Manifest values", style = MaterialTheme.typography.titleMedium)
+            Text(heading, style = MaterialTheme.typography.titleMedium)
         }
         Text(
-            "Tap a value to change it. Changes are applied to the copy when you build; the original is never changed. The package name is changed with \"Install as a separate app\" in the Build tab. A wrong value can stop the app from installing or opening.",
+            intro,
             Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall,
         )
         OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), singleLine = true, label = { Text("Search tag, name or value") })
@@ -49,16 +54,16 @@ fun ManifestEditScreen(
         if (all == null) { Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }; return@Column }
         val shown = remember(all, query, onlyEditable) {
             val q = query.trim().lowercase()
-            all.filter { (!onlyEditable || it.editable) && (q.isEmpty() || (it.title + " " + it.label + " " + ManifestEdit.show(it)).lowercase().contains(q)) }.take(400)
+            all.filter { (!onlyEditable || it.editable) && (q.isEmpty() || (it.title + " " + it.label + " " + showOf(it)).lowercase().contains(q)) }.take(400)
         }
-        if (all.isEmpty()) Text("The manifest could not be read.", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error)
+        if (all.isEmpty()) Text("This file could not be read.", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error)
         LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(shown, key = { it.key }) { s ->
                 val change = staged.firstOrNull { it.change.key == s.key }
                 Card(Modifier.fillMaxWidth().then(if (s.editable) Modifier.clickable { editing = s } else Modifier)) {
                     Column(Modifier.padding(12.dp)) {
-                        Text(s.title, style = MaterialTheme.typography.labelMedium)
-                        Text(s.label + " = " + (change?.shown ?: ManifestEdit.show(s)), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall,
+                        Text(s.title, style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
+                        Text(s.label + " = " + (change?.shown ?: showOf(s)), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall,
                             color = if (change != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
                         if (change != null) Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("will be changed", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
@@ -72,7 +77,7 @@ fun ManifestEditScreen(
     }
 
     editing?.let { s ->
-        var text by remember(s) { mutableStateOf(staged.firstOrNull { it.change.key == s.key }?.shown ?: ManifestEdit.show(s)) }
+        var text by remember(s) { mutableStateOf(staged.firstOrNull { it.change.key == s.key }?.shown ?: showOf(s)) }
         var error by remember(s) { mutableStateOf<String?>(null) }
         AlertDialog(
             onDismissRequest = { editing = null },
@@ -89,11 +94,11 @@ fun ManifestEditScreen(
             },
             confirmButton = {
                 TextButton({
-                    when (val p = ManifestEdit.parse(s, text)) {
+                    when (val p = parseOf(s, text)) {
                         is ManifestParsed.Bad -> error = p.message
                         is ManifestParsed.Ok -> {
                             if (p.dataType == s.dataType && p.data == s.data && p.text == s.text) onUnstage(s.key)
-                            else onStage(listOf(StagedManifest(ManifestChange(s.element, s.namespace, s.name, p.dataType, p.data, p.text), s.title, s.label, if (p.text != null) p.text else text.trim())))
+                            else onStage(listOf(StagedManifest(ManifestChange(s.element, s.namespace, s.name, p.dataType, p.data, p.text, s.path), s.title, s.label, if (p.text != null) p.text else text.trim())))
                             editing = null
                         }
                     }
