@@ -228,11 +228,11 @@ private fun BuildBar(
                     color = if (o.report.verified) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                 )
                 Text(
-                    formatBytes(o.sizeBytes) + (o.newPackage?.let { " · installs beside the original as $it" } ?: "") + " · full details at the bottom of the list",
+                    formatBytes(o.sizeBytes + o.parts.sumOf { it.second.length() }) + (if (o.parts.isNotEmpty()) " · ${o.parts.size + 1} files" else "") + (o.newPackage?.let { " · installs beside the original as $it" } ?: "") + " · full details at the bottom of the list",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onExport) { Text("Export APK") }
+                    Button(onExport) { Text(if (o.parts.isEmpty()) "Export APK" else "Export all parts (.apks)") }
                     OutlinedButton(onInstall, enabled = o.report.verified) { Text("Install…") }
                 }
             }

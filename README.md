@@ -99,6 +99,15 @@ Works now:
   generated classes (lambdas, `R`, `BuildConfig`) hidden unless you switch them on. Classes declared in the manifest are
   marked Activity, Service, Receiver or Provider, and the app's own package is listed first. Search ignores the
   package grouping and puts app classes before library ones. Checked on Apkforge's own APK: 823 of 16,563 classes are "App".
+- **Split apps (base plus other parts).** Import the app from **Installed apps** so Apkforge copies the base and every
+  other part. **Build** then applies your changes to the base, re-signs every part with the same key, renames the
+  package inside every part when you install as a separate app (and copies a changed `versionCode` into them, because
+  Android refuses a set whose parts disagree), and installs all files in one session. **Export** writes one `.apks` file
+  (a zip of `base.apk` and the parts). The parts are copies from the phone they came from, so they match its processor,
+  screen density and languages. Build stays blocked when a part could not be copied or read, or when only the base file
+  was opened. Edits go into the base: pictures that live only in a density or language part cannot be replaced yet.
+  Checked: a real aapt2-built part comes out with the renamed package, the new versionCode and a renamed resource
+  table, and passes `zipalign`. **Not yet confirmed on a phone: installing a whole set.**
 - **Edit manifest values.** In the Manifest tab, **Edit values** lists every attribute of
   `AndroidManifest.xml` (searchable). Text, whole numbers and on/off flags can be changed (for example
   `versionName`, `versionCode`, `allowBackup`); references and the package name cannot (the package name is
@@ -111,7 +120,7 @@ Works now:
   rebuilds a copy (original untouched), signs it with Apkforge's own key, and verifies the
   signature. The planned changes, the Build button and the result stay pinned at the bottom of the tab. Then **Export APK** or **Install…** (Android shows its own confirmation; it never
   installs, replaces or uninstalls silently). If Android refuses, the screen shows Android's own
-  message with a plain explanation of its error code, and the code (never app names) goes in the debug log. Not available for system apps or split apps.
+  message with a plain explanation of its error code, and the code (never app names) goes in the debug log. Split apps are rebuilt as a set (below).
 - **Signing key** (Settings): created on first build, kept in the app's private storage, never
   logged. A damaged key is reported, never silently replaced. The modified copy has a different
   signature than the original, so Android will not install it over the original; you would have to

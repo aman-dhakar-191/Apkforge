@@ -41,13 +41,15 @@ object ForgeInstaller {
 
     fun canInstall(context: Context): Boolean = context.packageManager.canRequestPackageInstalls()
 
-    fun start(context: Context, apk: File) {
+    /** [parts] are the other files of a split app: they go into the same session and install together with [apk]. */
+    fun start(context: Context, apk: File, parts: List<Pair<String, File>> = emptyList()) {
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
         val sessionId = installer.createSession(params)
         installer.openSession(sessionId).use { session ->
-            apk.inputStream().use { input ->
-                session.openWrite("forged.apk", 0, apk.length()).use { output ->
+            val files = listOf("base.apk" to apk) + parts.map { (n, f) -> n.replace(Regex("[^A-Za-z0-9._-]"), "_") to f }
+            for ((name, file) in files) file.inputStream().use { input ->
+                session.openWrite(name, 0, file.length()).use { output ->
                     input.copyTo(output)
                     session.fsync(output)
                 }
