@@ -102,7 +102,7 @@ fun FileViewerScreen(target: ViewerTarget, open: suspend (String) -> FileView, o
                     (if (v.compiled) "XML: yes. Android's compiled (binary) XML, shown decoded. References appear by name." else "XML: yes. Plain XML text.") + " · ${formatBytes(v.bytes)}",
                     Modifier.padding(horizontal = 16.dp),
                 )
-                if (v.compiled && onEditXml != null && file.entry.startsWith("res/")) OutlinedButton({ onEditXml(file.entry) }, Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { Text("Edit values (text, colours, sizes…)") }
+                if (v.compiled && onEditXml != null && file.entry.startsWith("res/")) OutlinedButton({ onEditXml(file.entry) }, Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { Text("Edit this file (views and values)") }
                 CodeLines(v.text, Modifier.fillMaxSize().padding(top = 6.dp))
             }
             is FileView.Text -> Column(Modifier.fillMaxSize()) {

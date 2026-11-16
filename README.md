@@ -109,10 +109,18 @@ Works now:
   Checked: a real aapt2-built part comes out with the renamed package, the new versionCode and a renamed resource
   table, and passes `zipalign`. **Not yet confirmed on a phone: installing a whole set.**
 - **Edit layouts and other XML files.** Open any compiled XML file under `res/` (a layout, menu, vector drawing...) from
-  the Resources or Files tab and tap **Edit values**. Every view is listed with its attributes; text, colours, sizes,
-  numbers, on/off flags and references can be changed (a reference can also be replaced by plain text). Only values that
-  are already there change: views and attributes cannot be added or removed yet, so the structure stays what the app
-  expects. Checked on an aapt2-built layout: only the edited attributes differ.
+  the Resources or Files tab and tap **Edit this file**. Views are shown as a tree. Tap a view for: **Attributes** (change a
+  value, remove an attribute, or add any of Android's 1,574 public `android:` attributes with their names for enum and
+  flag values, for example `match_parent` or `center_horizontal|top`), **Add inside**, **Add after**, **Copy** (the copy
+  drops `android:id`, so two views never share one), **Up / Down / Into the one above / Out of its parent**, and
+  **Remove** (with a warning that code may look the view up by id). Every action is one planned step, with **Undo** and
+  **Revert all**; nothing is written until you build, and the original is never changed. New views can only use ids that
+  already exist (no new resources can be created).
+  How it was checked: the compiled-XML reader/writer was run on 1,842 real files (all of Android 15's framework layouts
+  plus this app's own): every one is read back identically by `aapt2 dump xmltree`, and the id/class/style index fields in
+  every element match. An edited layout (added view with colour and gravity, a copy, a removal, a new attribute) is
+  accepted by `aapt2` with attributes in resource-id order. Not confirmed: how an edited layout looks on a phone, and a
+  layout that code expects to find unchanged will crash if its views are removed.
 - **Fix: content-provider authorities given as resources.** A copy installed beside the original failed with
   `INSTALL_FAILED_CONFLICTING_PROVIDER` when the app's provider authority was a string resource (`@string/...`) instead
   of text in the manifest (seen on a shopping app). The text is now renamed in the resource table, in every language.
