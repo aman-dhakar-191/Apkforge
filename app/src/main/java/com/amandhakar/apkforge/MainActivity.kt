@@ -51,6 +51,9 @@ class MainActivity : ComponentActivity() {
         val saveForged = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/vnd.android.package-archive")) { uri ->
             if (uri != null) vm.exportForged(uri)
         }
+        val saveForgedSet = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+            if (uri != null) vm.exportForged(uri)
+        }
         val saveLog = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
             if (uri != null) vm.saveLog(uri)
         }
@@ -92,7 +95,7 @@ class MainActivity : ComponentActivity() {
                         onPickImage = { pendingImage = it; pickPicture.launch(arrayOf("image/*")) },
                         onUnstage = vm::unstage,
                         onBuild = vm::buildCopy,
-                        onExportForged = { saveForged.launch((state.details!!.metadata?.packageName ?: "app") + "-modified.apk") },
+                        onExportForged = { val n = (state.details!!.metadata?.packageName ?: "app") + "-modified"; if (state.build.outcome?.parts?.isNotEmpty() == true) saveForgedSet.launch("$n.apks") else saveForged.launch("$n.apk") },
                         onInstall = { installModified() },
                         openFile = vm::openFile,
                         thumbOfResource = vm::thumbnailOfResource,

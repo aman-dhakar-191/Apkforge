@@ -23,6 +23,7 @@ import com.amandhakar.apkforge.build.IconFinder
 import com.amandhakar.apkforge.build.IconPart
 import com.amandhakar.apkforge.build.CloneResult
 import com.amandhakar.apkforge.build.CloneSpec
+import com.amandhakar.apkforge.build.SplitSet
 import com.amandhakar.apkforge.build.PackageClone
 import com.amandhakar.apkforge.build.ApkEdit
 import com.amandhakar.apkforge.build.ApkRebuilder
@@ -116,6 +117,8 @@ class BuildOutcome(
     val apk: File, val report: VerifyReport, val sizeBytes: Long, val fingerprint: String,
     val changes: List<String>, val createdKey: Boolean,
     val newPackage: String? = null, val notes: List<String> = emptyList(),
+    /** The other parts of a split app, re-signed: file name and file. Empty for a whole APK. */
+    val parts: List<Pair<String, File>> = emptyList(),
 )
 
 /** A change to one resource value, ready to be built into the copy. */
@@ -431,7 +434,12 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
     /** The reason this app cannot be rebuilt in this version, or null. */
     fun buildBlockedReason(d: ProjectDetails, copyAsNew: Boolean = true): String? = when {
         d.project.system && !copyAsNew -> "This is a system app: a modified copy can only be installed beside it, not over it. Turn on \"Install as a separate copy\"."
-        d.split?.kind == SplitKind.BASE_NEEDS_SPLITS || d.split?.kind == SplitKind.SPLIT_PART -> "This is a split app. Rebuilding and re-signing a whole set is not available in this version."
+        d.split?.kind == SplitKind.SPLIT_PART -> "This file is one part of a split app, not its base. Open the base, or import the whole app from Installed apps, to rebuild it."
+        d.split?.kind == SplitKind.BASE_NEEDS_SPLITS && d.parts.isEmpty() -> "This is a split app and Apkforge only has its base. Import the app from Installed apps so all its parts are copied, then build."
+        d.split?.kind == SplitKind.BASE_NEEDS_SPLITS && (d.project.copiedSplits < d.project.declaredSplits || d.parts.any { !it.readable }) ->
+            "Apkforge could not copy or read every part of this split app, and a set with missing parts cannot be installed. Import it again from Installed apps."
+        d.split?.kind == SplitKind.BASE_NEEDS_SPLITS && d.project.system && !copyAsNew -> "This is a system app: a modified copy can only be installed beside it, not over it. Turn on \"Install as a separate copy\"."
+
         d.inspection !is InspectionResult.Ok -> "This file could not be read as an APK."
         (d.resources as? ResourceResult.Ok) == null -> "This APK has no readable resource table, so there are no images to pick from."
         else -> null
@@ -606,15 +614,33 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                         patchedClasses = patches.size
                     }
                     rebuilder.rebuild(apk, unsigned, replacements, renames, additions)
+                    val splitParts = if (d.split?.kind == SplitKind.BASE_NEEDS_SPLITS) workspace.splitFiles(d.project.id) else emptyList()
                     val hadKey = keys.exists()
                     val identity = keys.loadOrCreate()
                     signing.sign(unsigned, signed, identity, d.metadata?.minSdk ?: 23)
-                    val report = checks.verify(signed, d.metadata?.minSdk)
+                    var report = checks.verify(signed, d.metadata?.minSdk)
+                    // the other parts of a split app: same key, same renames, one set
+                    val partOutputs = ArrayList<Pair<String, File>>()
+                    workspace.outputFile(d.project.id, "x").parentFile?.listFiles { f -> f.name.startsWith("forged-part-") }?.forEach { it.delete() }
+                    val newPkg = if (ui.copyAsNew) "$oldPackage.${ui.suffix}" else null
+                    val newVersion = manifestEdits.firstOrNull { it.change.element == 0 && it.change.name == "versionCode" }?.change?.data
+                    for ((i, pf) in splitParts.withIndex()) {
+                        val pu = workspace.outputFile(d.project.id, "forged-part-$i-unsigned.apk")
+                        val ps = workspace.outputFile(d.project.id, "forged-part-$i.apk")
+                        try {
+                            rebuilder.rebuild(pf, pu, SplitSet.prepare(pf, oldPackage!!, newPkg, newVersion).replacements)
+                            signing.sign(pu, ps, identity, d.metadata?.minSdk ?: 23)
+                        } finally { pu.delete() }
+                        val pr = checks.verify(ps, d.metadata?.minSdk)
+                        if (!pr.verified && report.verified) report = pr
+                        partOutputs += pf.name to ps
+                    }
                     log.event("build", "files" to edits.size, "verified" to report.verified, "v2" to report.v2, "v3" to report.v3, "bytes" to signed.length(), "copy" to ui.copyAsNew, "values" to values.size, "manifest" to manifestEdits.size)
-                    val changes = EditPlan.summary(edits, entries) + values.map { "Change ${it.label}: ${it.shown.take(60)}" } + manifestEdits.map { "Manifest ${it.title} ${it.label}: ${it.shown.take(60)}" } + (if (patchedClasses > 0) listOf("Patch the code of $patchedClasses class${if (patchedClasses == 1) "" else "es"} (a new first code file)") else emptyList()) + (if (clone != null) listOf("Install as a separate app: ${oldPackage}.${ui.suffix}, named \"${ui.label}\"") else emptyList())
-                    BuildOutcome(signed, report, signed.length(), identity.fingerprint, changes, createdKey = !hadKey, newPackage = clone?.let { "$oldPackage.${ui.suffix}" }, notes = clone?.notes.orEmpty()) to null
+                    val changes = EditPlan.summary(edits, entries) + values.map { "Change ${it.label}: ${it.shown.take(60)}" } + manifestEdits.map { "Manifest ${it.title} ${it.label}: ${it.shown.take(60)}" } + (if (patchedClasses > 0) listOf("Patch the code of $patchedClasses class${if (patchedClasses == 1) "" else "es"} (a new first code file)") else emptyList()) + (if (partOutputs.isNotEmpty()) listOf("Re-sign the other ${partOutputs.size} part${if (partOutputs.size == 1) "" else "s"} of the app with the same key") else emptyList()) + (if (clone != null) listOf("Install as a separate app: ${oldPackage}.${ui.suffix}, named \"${ui.label}\"") else emptyList())
+                    BuildOutcome(signed, report, signed.length(), identity.fingerprint, changes, createdKey = !hadKey, newPackage = clone?.let { "$oldPackage.${ui.suffix}" }, notes = clone?.notes.orEmpty() + (if (partOutputs.isNotEmpty()) listOf("This app is a set of ${partOutputs.size + 1} files. They are installed together, and the other parts are copies from this phone, so they match its processor, screen density and languages.") else emptyList()), parts = partOutputs) to null
                 } catch (e: Exception) {
                     signed.delete()
+                    workspace.outputFile(d.project.id, "x").parentFile?.listFiles { f -> f.name.startsWith("forged-part-") }?.forEach { it.delete() }
                     log.event("build_failed", "reason" to e.javaClass.simpleName)
                     null to (e.message ?: e.javaClass.simpleName)
                 } finally {
@@ -633,8 +659,16 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val msg = withContext(Dispatchers.IO) {
                 try {
-                    getApplication<Application>().contentResolver.openOutputStream(dest)?.use { o -> outcome.apk.inputStream().use { it.copyTo(o) } } ?: error("Android would not open the destination")
-                    log.event("forged_exported"); "Exported the modified APK."
+                    getApplication<Application>().contentResolver.openOutputStream(dest)?.use { o ->
+                        if (outcome.parts.isEmpty()) outcome.apk.inputStream().use { it.copyTo(o) }
+                        else java.util.zip.ZipOutputStream(o).use { zip ->
+                            // base.apk plus the other parts, in one .apks file (a zip that split installers understand)
+                            for ((name, file) in listOf("base.apk" to outcome.apk) + outcome.parts) {
+                                zip.putNextEntry(java.util.zip.ZipEntry(name)); file.inputStream().use { it.copyTo(zip) }; zip.closeEntry()
+                            }
+                        }
+                    } ?: error("Android would not open the destination")
+                    log.event("forged_exported", "parts" to outcome.parts.size); if (outcome.parts.isEmpty()) "Exported the modified APK." else "Exported the modified app as one .apks file (base.apk and ${outcome.parts.size} other parts)."
                 } catch (e: Exception) { "Export failed: ${e.message ?: e.javaClass.simpleName}" }
             }
             setBuild { it.copy(running = null) }; message(msg)
@@ -646,7 +680,7 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
         val outcome = _state.value.build.outcome ?: return
         if (!outcome.report.verified) { message("The signature check did not pass, so Apkforge will not install this."); return }
         viewModelScope.launch {
-            val err = withContext(Dispatchers.IO) { try { ForgeInstaller.start(getApplication(), outcome.apk); log.event("install_started"); null } catch (e: Exception) { e.message ?: e.javaClass.simpleName } }
+            val err = withContext(Dispatchers.IO) { try { ForgeInstaller.start(getApplication(), outcome.apk, outcome.parts); log.event("install_started"); null } catch (e: Exception) { e.message ?: e.javaClass.simpleName } }
             if (err != null) message("Could not start the install: $err")
         }
     }
