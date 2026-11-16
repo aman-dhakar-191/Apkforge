@@ -70,7 +70,7 @@ fun CodeLines(text: String, modifier: Modifier = Modifier) {
 
 /** Opens a file (or one file per screen density of a resource) and says what it is. */
 @Composable
-fun FileViewerScreen(target: ViewerTarget, open: suspend (String) -> FileView, onBack: () -> Unit) {
+fun FileViewerScreen(target: ViewerTarget, open: suspend (String) -> FileView, onEditXml: ((String) -> Unit)? = null, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
     var selected by remember(target) { mutableIntStateOf(0) }
     val file = target.files[selected]
@@ -102,6 +102,7 @@ fun FileViewerScreen(target: ViewerTarget, open: suspend (String) -> FileView, o
                     (if (v.compiled) "XML: yes. Android's compiled (binary) XML, shown decoded. References appear by name." else "XML: yes. Plain XML text.") + " · ${formatBytes(v.bytes)}",
                     Modifier.padding(horizontal = 16.dp),
                 )
+                if (v.compiled && onEditXml != null && file.entry.startsWith("res/")) OutlinedButton({ onEditXml(file.entry) }, Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { Text("Edit values (text, colours, sizes…)") }
                 CodeLines(v.text, Modifier.fillMaxSize().padding(top = 6.dp))
             }
             is FileView.Text -> Column(Modifier.fillMaxSize()) {

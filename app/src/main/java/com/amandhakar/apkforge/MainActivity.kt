@@ -114,6 +114,7 @@ class MainActivity : ComponentActivity() {
                         loadManifestSlots = vm::manifestSlots,
                         onStageManifest = vm::stageManifest,
                         onUnstageManifest = vm::unstageManifest,
+                        loadXmlSlots = vm::xmlSlots,
                     )
                     showInstalled -> InstalledAppsScreen(
                         apps = state.installed,
