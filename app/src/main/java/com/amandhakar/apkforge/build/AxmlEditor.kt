@@ -129,7 +129,7 @@ class AxmlEditor(private val maxElements: Int = 100_000) {
 
     private companion object { val TYPED_OK = setOf(0x01, 0x04, 0x05, 0x06, 0x10, 0x11, 0x12, 0x1c, 0x1d, 0x1e, 0x1f) }
 
-    private fun encodePool(strings: List<String>, utf8: Boolean, flags: Int): ByteArray {
+    internal fun encodePool(strings: List<String>, utf8: Boolean, flags: Int): ByteArray {
         val data = ByteArrayOutputStream()
         val offsets = IntArray(strings.size)
         strings.forEachIndexed { i, s ->

@@ -139,6 +139,8 @@ data class BuildUi(
     val values: List<StagedValue> = emptyList(),
     /** AndroidManifest.xml attributes to change. */
     val manifest: List<StagedManifest> = emptyList(),
+    /** Planned changes to layouts and other XML files, by file path, in the order they were made. */
+    val layouts: Map<String, List<com.amandhakar.apkforge.build.LayoutOp>> = emptyMap(),
     val running: String? = null,
     val outcome: BuildOutcome? = null,
     val problem: String? = null,
@@ -541,17 +543,19 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) { emptyList() }
     }
 
-    /** The attributes of one compiled XML file of the app (a layout, menu, vector drawing...). Empty when it cannot be read. */
-    suspend fun xmlSlots(path: String): List<com.amandhakar.apkforge.build.ManifestSlot> = withContext(Dispatchers.IO) {
-        val d = _state.value.details ?: return@withContext emptyList()
+    /** The bytes of one file of the original APK (up to 8 MB), or null. */
+    suspend fun xmlBytes(path: String): ByteArray? = withContext(Dispatchers.IO) {
+        val d = _state.value.details ?: return@withContext null
         try {
-            val apk = workspace.originalApk(d.project.id) ?: return@withContext emptyList()
-            java.util.zip.ZipFile(apk).use { z ->
-                val e = z.getEntry(path) ?: return@use emptyList()
-                if (e.size > 8 * 1024 * 1024) emptyList()
-                else com.amandhakar.apkforge.build.XmlEdit.slots(path, z.getInputStream(e).use { it.readBytes() }) { id -> resourceName(id) }
-            }
-        } catch (e: Exception) { emptyList() }
+            val apk = workspace.originalApk(d.project.id) ?: return@withContext null
+            java.util.zip.ZipFile(apk).use { z -> z.getEntry(path)?.takeIf { it.size <= 8 * 1024 * 1024 }?.let { e -> z.getInputStream(e).use { it.readBytes() } } }
+        } catch (e: Exception) { null }
+    }
+
+    /** Replaces the planned steps for one layout file (empty removes them). */
+    fun setLayoutOps(path: String, ops: List<com.amandhakar.apkforge.build.LayoutOp>) {
+        log.event("layout_ops", "steps" to ops.size)
+        setBuild { b -> b.copy(layouts = if (ops.isEmpty()) b.layouts - path else b.layouts + (path to ops), outcome = null, problem = null) }
     }
 
     fun stageManifest(changes: List<StagedManifest>) {
@@ -573,8 +577,8 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
         val patches = _state.value.patches
         val values = ui.values
         val manifestEdits = ui.manifest.filter { it.change.path == "AndroidManifest.xml" }
-        val xmlEdits = ui.manifest.filter { it.change.path != "AndroidManifest.xml" }
-        if (staged.isEmpty() && values.isEmpty() && manifestEdits.isEmpty() && xmlEdits.isEmpty() && !ui.copyAsNew && patches.isEmpty()) { setBuild { it.copy(problem = "There is nothing to change yet: pick an image, change a resource or manifest value, patch some code, or install as a separate copy.") }; return }
+        val layoutEdits = ui.layouts
+        if (staged.isEmpty() && values.isEmpty() && manifestEdits.isEmpty() && layoutEdits.isEmpty() && !ui.copyAsNew && patches.isEmpty()) { setBuild { it.copy(problem = "There is nothing to change yet: pick an image, change a resource or manifest value, patch some code, or install as a separate copy.") }; return }
         buildBlockedReason(d, ui.copyAsNew)?.let { r -> setBuild { it.copy(problem = r) }; return }
         if (ui.copyAsNew) {
             val p = PackageClone.suffixProblem(ui.suffix) ?: PackageClone.labelProblem(ui.label)
@@ -609,10 +613,10 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                         replacements["AndroidManifest.xml"] = patchedManifest
                     }
                     // layouts and other compiled XML files: edit the attribute values in place
-                    for ((path, group) in xmlEdits.groupBy { it.change.path }) {
-                        if (path in renames) return@withContext null to "$path is also being turned into a picture, so its values cannot be edited at the same time. Remove one of the two changes."
+                    for ((path, ops) in layoutEdits) {
+                        if (path in renames) return@withContext null to "$path is also being turned into a picture, so it cannot be edited at the same time. Remove one of the two changes."
                         val original = java.util.zip.ZipFile(apk).use { z -> (z.getEntry(path) ?: return@withContext null to "The file $path is not in the APK.").let { e -> z.getInputStream(e).use { it.readBytes() } } }
-                        replacements[path] = com.amandhakar.apkforge.build.ManifestEdit.apply(original, group.map { it.change })
+                        replacements[path] = try { com.amandhakar.apkforge.build.LayoutEditor.apply(original, ops) } catch (e: com.amandhakar.apkforge.inspect.AxmlException) { return@withContext null to "${path.substringAfterLast('/')}: ${e.message}" }
                     }
                     var clone: CloneResult.Ok? = null
                     if (ui.copyAsNew) {
@@ -655,8 +659,8 @@ class ForgeViewModel(app: Application) : AndroidViewModel(app) {
                         if (!pr.verified && report.verified) report = pr
                         partOutputs += pf.name to ps
                     }
-                    log.event("build", "files" to edits.size, "verified" to report.verified, "v2" to report.v2, "v3" to report.v3, "bytes" to signed.length(), "copy" to ui.copyAsNew, "values" to values.size, "manifest" to manifestEdits.size, "xml" to xmlEdits.size)
-                    val changes = EditPlan.summary(edits, entries) + values.map { "Change ${it.label}: ${it.shown.take(60)}" } + manifestEdits.map { "Manifest ${it.title} ${it.label}: ${it.shown.take(60)}" } + xmlEdits.map { "${it.change.path} ${it.title.trim()} ${it.label}: ${it.shown.take(60)}" } + (if (patchedClasses > 0) listOf("Patch the code of $patchedClasses class${if (patchedClasses == 1) "" else "es"} (a new first code file)") else emptyList()) + (if (partOutputs.isNotEmpty()) listOf("Re-sign the other ${partOutputs.size} part${if (partOutputs.size == 1) "" else "s"} of the app with the same key") else emptyList()) + (if (clone != null) listOf("Install as a separate app: ${oldPackage}.${ui.suffix}, named \"${ui.label}\"") else emptyList())
+                    log.event("build", "files" to edits.size, "verified" to report.verified, "v2" to report.v2, "v3" to report.v3, "bytes" to signed.length(), "copy" to ui.copyAsNew, "values" to values.size, "manifest" to manifestEdits.size, "layouts" to layoutEdits.size, "layoutSteps" to layoutEdits.values.sumOf { it.size })
+                    val changes = EditPlan.summary(edits, entries) + values.map { "Change ${it.label}: ${it.shown.take(60)}" } + manifestEdits.map { "Manifest ${it.title} ${it.label}: ${it.shown.take(60)}" } + layoutEdits.flatMap { (p, ops) -> ops.map { "${p.substringAfterLast('/')}: ${it.describe()}" } } + (if (patchedClasses > 0) listOf("Patch the code of $patchedClasses class${if (patchedClasses == 1) "" else "es"} (a new first code file)") else emptyList()) + (if (partOutputs.isNotEmpty()) listOf("Re-sign the other ${partOutputs.size} part${if (partOutputs.size == 1) "" else "s"} of the app with the same key") else emptyList()) + (if (clone != null) listOf("Install as a separate app: ${oldPackage}.${ui.suffix}, named \"${ui.label}\"") else emptyList())
                     BuildOutcome(signed, report, signed.length(), identity.fingerprint, changes, createdKey = !hadKey, newPackage = clone?.let { "$oldPackage.${ui.suffix}" }, notes = clone?.notes.orEmpty() + (if (partOutputs.isNotEmpty()) listOf("This app is a set of ${partOutputs.size + 1} files. They are installed together, and the other parts are copies from this phone, so they match its processor, screen density and languages.") else emptyList()), parts = partOutputs) to null
                 } catch (e: Exception) {
                     signed.delete()
