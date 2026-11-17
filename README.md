@@ -125,6 +125,12 @@ Works now:
   `INSTALL_FAILED_CONFLICTING_PROVIDER` when the app's provider authority was a string resource (`@string/...`) instead
   of text in the manifest (seen on a shopping app). The text is now renamed in the resource table, in every language.
   Checked with `aapt2`: the renamed authority appears in the default and Hindi strings.
+- **Fix: Code tab stopped responding on huge apps.** An app with 228,034 classes in 32 code files made Android show
+  "Apkforge isn't responding", because every folder, filter and search rescanned all classes on the main thread. The
+  classes are now sorted into a package tree once, in the background (a spinner shows meanwhile), and every folder,
+  filter and count is read from the tree. Search runs in the background after a short pause. On the build machine a
+  250,000-class app builds the tree in about 0.6 s, a folder listing takes about 2 ms and a search about 40 ms (a phone is
+  several times slower, but nothing runs on the main thread).
 - **Edit manifest values.** In the Manifest tab, **Edit values** lists every attribute of
   `AndroidManifest.xml` (searchable). Text, whole numbers and on/off flags can be changed (for example
   `versionName`, `versionCode`, `allowBackup`); references and the package name cannot (the package name is

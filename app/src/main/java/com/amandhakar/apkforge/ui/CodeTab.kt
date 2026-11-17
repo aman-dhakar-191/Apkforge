@@ -17,7 +17,10 @@ import com.amandhakar.apkforge.code.ClassBrowser
 import com.amandhakar.apkforge.code.ClassBrowser.Scope
 import com.amandhakar.apkforge.code.CodeIndex
 import com.amandhakar.apkforge.code.SmaliClass
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val EDIT_LIMIT = 300_000
 
@@ -53,14 +56,28 @@ fun CodeTab(
         }
         return
     }
-    val slots by produceState<List<com.amandhakar.apkforge.build.ManifestSlot>>(emptyList()) { value = loadManifestSlots() }
-    val hints = remember(appPackage, slots) { ClassBrowser.hintsOf(appPackage, slots) }
+    // The package tree is built once, off the main thread (a big app has 200,000+ classes); everything below reads from it.
+    val slots by produceState<List<com.amandhakar.apkforge.build.ManifestSlot>?>(null) { value = loadManifestSlots() }
+    val hints = remember(appPackage, slots) { slots?.let { ClassBrowser.hintsOf(appPackage, it) } }
+    val tree by produceState<ClassBrowser.Tree?>(null, idx, hints) { val h = hints; value = if (h == null) null else withContext(Dispatchers.Default) { ClassBrowser.Tree.build(idx.classes, h) } }
     val searching = query.isNotBlank()
     BackHandler(enabled = !searching && path.isNotEmpty()) { path = path.substringBeforeLast('.', "") .let { parent -> if (parent == path) "" else parent } }
-    val listing = remember(idx, path, scope, showGenerated, hints) { ClassBrowser.listing(idx.classes, path, scope, hints, showGenerated) }
-    val found = remember(idx, query, scope, showGenerated, hints) { if (searching) ClassBrowser.search(idx.classes, query, scope, hints, showGenerated, 300) else emptyList() }
-    val counts = remember(idx, hints, showGenerated) { Scope.values().associateWith { ClassBrowser.count(idx.classes, it, hints, showGenerated) } }
+    val tr = tree
+    if (tr == null) {
+        Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp); Spacer(Modifier.width(10.dp)); Text("Sorting ${idx.classes.size} classes into packages…") }
+        }
+        return
+    }
+    val listingState = produceState<ClassBrowser.Listing?>(null, tr, path, scope, showGenerated) { value = withContext(Dispatchers.Default) { tr.listing(path, scope, showGenerated) } }
+    val foundState = produceState<List<ClassBrowser.Entry>?>(null, tr, query, scope, showGenerated) {
+        value = if (!searching) emptyList() else { delay(250); withContext(Dispatchers.Default) { tr.search(query, scope, showGenerated, 300) } }
+    }
+    val listing = listingState.value ?: ClassBrowser.Listing(emptyList(), emptyList())
+    val found = foundState.value ?: emptyList()
+    val counts = Scope.values().associateWith { tr.count(it, showGenerated) }
     val multiDex = idx.dexEntries.size > 1
+    val patchClasses = remember(idx, patches.keys.toSet()) { val keys = patches.keys.toSet(); if (keys.isEmpty()) emptyMap() else idx.classes.filter { it.descriptor in keys }.associateBy { it.descriptor } }
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
@@ -106,7 +123,7 @@ fun CodeTab(
                         Text("These classes are rebuilt into a new first code file when you build. Open one to change it.", style = MaterialTheme.typography.bodySmall)
                         patches.keys.forEach { d ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                val c = idx.classes.firstOrNull { it.descriptor == d }
+                                val c = patchClasses[d]
                                 Text(d.removePrefix("L").removeSuffix(";").replace('/', '.'), Modifier.weight(1f).clickable(enabled = c != null) { open = c }, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                                 TextButton({ removePatch(d) }) { Text("Remove") }
                             }
@@ -115,7 +132,8 @@ fun CodeTab(
                 }
             }
             if (searching) {
-                if (found.isEmpty()) item { Text("No class matches in \"${scope.name}\". Try All.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 8.dp)) }
+                if (foundState.value == null) item { Text("Searching…", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 8.dp)) }
+                else if (found.isEmpty()) item { Text("No class matches in \"${scope.name}\". Try All.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 8.dp)) }
                 items(found, key = { it.cls.descriptor }) { e -> ClassRow(e.cls, 0, e.kind, true) }
                 if (found.size == 300) item { Text("Showing the first 300. Narrow the search to see more.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 8.dp)) }
             } else {
