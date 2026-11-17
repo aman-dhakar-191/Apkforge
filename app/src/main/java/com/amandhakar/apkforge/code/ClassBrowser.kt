@@ -51,65 +51,108 @@ object ClassBrowser {
         Scope.Libraries -> isLibrary(name, h)
     }
 
-    fun count(classes: List<SmaliClass>, scope: Scope, h: Hints, showGenerated: Boolean) =
-        classes.count { inScope(it.name, scope, h) && (showGenerated || !isGenerated(it.name)) }
-
-    /** The classes directly in package [path] ("" is the top), plus its sub-packages; chains of single sub-packages are joined. */
-    fun listing(classes: List<SmaliClass>, path: String, scope: Scope, h: Hints, showGenerated: Boolean): Listing {
-        val subs = LinkedHashMap<String, Int>()
-        val here = ArrayList<SmaliClass>()
-        val prefix = if (path.isEmpty()) "" else "$path."
-        for (c in classes) {
-            val n = c.name
-            if (!n.startsWith(prefix) || !inScope(n, scope, h) || (!showGenerated && isGenerated(n))) continue
-            val rest = n.substring(prefix.length)
-            val dot = rest.indexOf('.')
-            if (dot < 0) here += c else subs.merge(rest.substring(0, dot), 1, Int::plus)
+    /**
+     * The classes arranged as a package tree, built once (off the main thread: Instagram has 228,000 classes). Every
+     * question afterwards (open a folder, change a filter, count) is answered from the tree without scanning the classes.
+     */
+    class Tree private constructor(private val classes: List<SmaliClass>, private val hints: Hints) {
+        private class Node(val path: String) {
+            val kids = HashMap<String, Node>()
+            val own = ArrayList<Int>()
+            val ownCount = IntArray(6)
+            val total = IntArray(6)
         }
-        fun ownPackage(seg: String): Boolean { val q = prefix + seg; return h.roots.any { q == it || "$q.".startsWith("$it.") || it.startsWith("$q.") } }
-        val folders = subs.entries.sortedWith(compareBy({ if (ownPackage(it.key)) 0 else 1 }, { it.key.lowercase() })).map { (seg, cnt) ->
-            var label = seg; var p = prefix + seg
-            while (true) { // join a -> b -> c when nothing else is in a or b
-                val only = singleChild(classes, p, scope, h, showGenerated) ?: break
-                label += ".$only"; p += ".$only"
+        private val root = Node("")
+        private val lib = BooleanArray(classes.size)
+        private val gen = BooleanArray(classes.size)
+        private val names = Array(classes.size) { classes[it].name }
+
+        init {
+            for (i in classes.indices) {
+                val n = names[i]
+                lib[i] = isLibrary(n, hints); gen[i] = isGenerated(n)
+                var node = root
+                var start = 0
+                while (true) {
+                    val dot = n.indexOf('.', start)
+                    if (dot < 0) break
+                    val seg = n.substring(start, dot)
+                    node = node.kids.getOrPut(seg) { Node(if (node.path.isEmpty()) seg else node.path + "." + seg) }
+                    start = dot + 1
+                    visibleSlots(i) { node.total[it]++ }
+                }
+                node.own += i
+                visibleSlots(i) { node.ownCount[it]++ }
             }
-            Folder(label, p, cnt)
+            for (i in classes.indices) visibleSlots(i) { root.total[it]++ }
         }
-        // inner classes (Outer$Inner) are folded under their outer class
-        val names = here.map { it.name }.toSet()
-        val inner = HashMap<String, Int>()
-        val top = ArrayList<SmaliClass>()
-        for (c in here) {
-            val simple = c.name.substringAfterLast('.')
-            val outer = simple.substringBefore('$', "")
-            val outerFull = c.name.substringBeforeLast('.', "").let { if (it.isEmpty()) outer else "$it.$outer" }
-            if (outer.isNotEmpty() && outerFull in names) inner.merge(outerFull, 1, Int::plus) else top += c
+
+        /** Calls [f] with every filter combination (scope x show-generated) in which class [i] is visible. */
+        private inline fun visibleSlots(i: Int, f: (Int) -> Unit) {
+            for (sc in 0..2) for (show in 0..1) {
+                val inScope = when (sc) { 0 -> !lib[i]; 1 -> lib[i]; else -> true }
+                if (inScope && (show == 1 || !gen[i])) f(sc * 2 + show)
+            }
         }
-        val entries = top.sortedBy { it.name.substringAfterLast('.').lowercase() }.map { Entry(it, inner[it.name] ?: 0, h.components[it.name]) }
-        return Listing(folders, entries)
+        private fun slot(scope: Scope, showGenerated: Boolean) = scope.ordinal * 2 + if (showGenerated) 1 else 0
+
+        fun count(scope: Scope, showGenerated: Boolean) = root.total[slot(scope, showGenerated)]
+
+        private fun find(path: String): Node? {
+            var node = root
+            if (path.isEmpty()) return node
+            for (seg in path.split('.')) node = node.kids[seg] ?: return null
+            return node
+        }
+
+        /** The classes directly in package [path] ("" is the top), plus its sub-packages; chains of single sub-packages are joined. */
+        fun listing(path: String, scope: Scope, showGenerated: Boolean): Listing {
+            val node = find(path) ?: return Listing(emptyList(), emptyList())
+            val k = slot(scope, showGenerated)
+            fun ownPackage(p: String) = hints.roots.any { p == it || "$p.".startsWith("$it.") || it.startsWith("$p.") }
+            val folders = node.kids.entries.filter { it.value.total[k] > 0 }
+                .sortedWith(compareBy({ if (ownPackage(it.value.path)) 0 else 1 }, { it.key.lowercase() }))
+                .map { (seg, kid) ->
+                    var cur = kid; var label = seg
+                    while (cur.ownCount[k] == 0) { // join a -> b -> c when nothing else is in a or b
+                        val visible = cur.kids.entries.filter { it.value.total[k] > 0 }
+                        if (visible.size != 1) break
+                        label += "." + visible[0].key; cur = visible[0].value
+                    }
+                    Folder(label, cur.path, kid.total[k])
+                }
+            val here = node.own.filter { i -> val show = showGenerated; val inScope = when (scope) { Scope.App -> !lib[i]; Scope.Libraries -> lib[i]; Scope.All -> true }; inScope && (show || !gen[i]) }
+            val present = HashSet<String>(here.size * 2).also { set -> here.forEach { set += names[it] } }
+            val inner = HashMap<String, Int>()
+            val top = ArrayList<Int>()
+            for (i in here) {
+                val n = names[i]
+                val simple = n.substringAfterLast('.')
+                val outer = simple.substringBefore('$', "")
+                val outerFull = n.substringBeforeLast('.', "").let { if (it.isEmpty()) outer else "$it.$outer" }
+                if (outer.isNotEmpty() && outerFull in present) inner.merge(outerFull, 1, Int::plus) else top += i
+            }
+            val entries = top.sortedBy { names[it].substringAfterLast('.').lowercase() }.map { Entry(classes[it], inner[names[it]] ?: 0, hints.components[names[it]]) }
+            return Listing(folders, entries)
+        }
+
+        /** Classes whose name contains [query], app classes first, at most [limit]. */
+        fun search(query: String, scope: Scope, showGenerated: Boolean, limit: Int): List<Entry> {
+            val q = query.trim()
+            val app = ArrayList<Int>(); val libs = ArrayList<Int>()
+            for (i in classes.indices) {
+                if (app.size >= limit) break
+                val inScope = when (scope) { Scope.App -> !lib[i]; Scope.Libraries -> lib[i]; Scope.All -> true }
+                if (!inScope || (!showGenerated && gen[i]) || !names[i].contains(q, ignoreCase = true)) continue
+                if (lib[i]) { if (libs.size < limit) libs += i } else app += i
+            }
+            return (app + libs).take(limit).map { Entry(classes[it], 0, hints.components[names[it]]) }
+        }
+
+        companion object { fun build(classes: List<SmaliClass>, hints: Hints) = Tree(classes, hints) }
     }
 
-    /** The only sub-package name of [p] when [p] holds no classes of its own and exactly one sub-package. */
-    private fun singleChild(classes: List<SmaliClass>, p: String, scope: Scope, h: Hints, showGenerated: Boolean): String? {
-        var child: String? = null
-        val prefix = "$p."
-        for (c in classes) {
-            val n = c.name
-            if (!n.startsWith(prefix) || !inScope(n, scope, h) || (!showGenerated && isGenerated(n))) continue
-            val rest = n.substring(prefix.length); val dot = rest.indexOf('.')
-            if (dot < 0) return null
-            val seg = rest.substring(0, dot)
-            if (child == null) child = seg else if (child != seg) return null
-        }
-        return child
-    }
-
-    /** Flat results for a search, app code first. */
-    fun search(classes: List<SmaliClass>, query: String, scope: Scope, h: Hints, showGenerated: Boolean, limit: Int): List<Entry> {
-        val q = query.trim()
-        return classes.asSequence()
-            .filter { it.name.contains(q, ignoreCase = true) && inScope(it.name, scope, h) && (showGenerated || !isGenerated(it.name)) }
-            .sortedBy { if (isLibrary(it.name, h)) 1 else 0 }
-            .take(limit).map { Entry(it, 0, h.components[it.name]) }.toList()
-    }
+    fun count(classes: List<SmaliClass>, scope: Scope, h: Hints, showGenerated: Boolean) = Tree.build(classes, h).count(scope, showGenerated)
+    fun listing(classes: List<SmaliClass>, path: String, scope: Scope, h: Hints, showGenerated: Boolean) = Tree.build(classes, h).listing(path, scope, showGenerated)
+    fun search(classes: List<SmaliClass>, query: String, scope: Scope, h: Hints, showGenerated: Boolean, limit: Int) = Tree.build(classes, h).search(query, scope, showGenerated, limit)
 }

@@ -20,7 +20,7 @@ class SmaliException(message: String, cause: Throwable? = null) : IOException(me
 /** A class in the app's code. [descriptor] looks like `Lcom/example/Foo;`; [dexEntry] is the file it lives in. */
 class SmaliClass(val descriptor: String, val dexEntry: String) {
     /** `com.example.Foo` */
-    val name: String get() = descriptor.removePrefix("L").removeSuffix(";").replace('/', '.')
+    val name: String by lazy(LazyThreadSafetyMode.NONE) { descriptor.removePrefix("L").removeSuffix(";").replace('/', '.') }
 }
 
 class CodeIndex(val dexEntries: List<String>, val classes: List<SmaliClass>, val unreadable: List<String>) {
